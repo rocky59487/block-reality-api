@@ -108,8 +108,9 @@ public class SnapshotBuilder {
 
         long elapsed = System.nanoTime() - t0;
 
-        LOGGER.debug("Snapshot captured: {}x{}x{} ({} blocks, {} non-air) in {:.2f}ms",
-            sizeX, sizeY, sizeZ, totalBlocks, nonAirCount, elapsed / 1_000_000.0);
+        LOGGER.debug("Snapshot captured: {}x{}x{} ({} blocks, {} non-air) in {}ms",
+            sizeX, sizeY, sizeZ, totalBlocks, nonAirCount,
+            String.format("%.2f", elapsed / 1_000_000.0));
 
         return new RWorldSnapshot(minX, minY, minZ, sizeX, sizeY, sizeZ, blocks, elapsed);
     }
