@@ -1,0 +1,30 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"
+issueTrackerURL="https://github.com/hankqaq/block-reality/issues"
+
+[[dependencies.blockreality]]
+    modId="forge"
+    mandatory=true
+    versionRange="[47.2.0,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.blockreality]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.20.1,1.21)"
+    ordering="NONE"
+    side="BOTH"
+
+[[mods]]
+    modId="blockreality"
+    version="${file.jarVersion}"
+    displayName="Block Reality API"
+    description='''
+        Block Reality API — 一個讓建築師能以更快速、更直覺方式在 Minecraft 中實現建築想法的 Mod。
+        提供 Fast Design 快速設計系統與 Construction Intern 施工助手功能。
+    '''
+    logoFile="blockreality.png"
+    authors="BlockRealityTeam"
+    displayURL="https://github.com/hankqaq/block-reality"
