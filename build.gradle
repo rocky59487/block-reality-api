@@ -1,110 +1,47 @@
 plugins {
+    id 'java'
     id 'eclipse'
     id 'idea'
-    id 'maven-publish'
     id 'net.minecraftforge.gradle' version '[6.0,6.2)'
 }
 
+group   = 'com.blockreality'
 version = '0.1.0-alpha'
-group = 'com.blockreality'
 archivesBaseName = 'block-reality-api'
 
-java.toolchain.languageVersion = JavaLanguageVersion.of(17)
-
-println "Java: ${System.getProperty('java.version')}, JVM: ${System.getProperty('java.vm.version')} (${System.getProperty('java.vendor')}), Arch: ${System.getProperty('os.arch')}"
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(17)
+}
 
 minecraft {
     mappings channel: 'official', version: '1.20.1'
-
-    copyIdeResources = true
-
     runs {
         client {
             workingDirectory project.file('run')
-            property 'forge.logging.markers', 'REGISTRIES'
             property 'forge.logging.console.level', 'debug'
-            property 'forge.enabledGameTestNamespaces', 'blockreality'
-            mods {
-                blockreality {
-                    source sourceSets.main
-                }
-            }
+            mods { blockreality { source sourceSets.main } }
         }
-
         server {
             workingDirectory project.file('run')
-            property 'forge.logging.markers', 'REGISTRIES'
             property 'forge.logging.console.level', 'debug'
-            property 'forge.enabledGameTestNamespaces', 'blockreality'
-            mods {
-                blockreality {
-                    source sourceSets.main
-                }
-            }
-        }
-
-        gameTestServer {
-            workingDirectory project.file('run')
-            property 'forge.logging.markers', 'REGISTRIES'
-            property 'forge.logging.console.level', 'debug'
-            property 'forge.enabledGameTestNamespaces', 'blockreality'
-            mods {
-                blockreality {
-                    source sourceSets.main
-                }
-            }
-        }
-
-        data {
-            workingDirectory project.file('run')
-            property 'forge.logging.markers', 'REGISTRIES'
-            property 'forge.logging.console.level', 'debug'
-            args '--mod', 'blockreality', '--all', '--output', file('src/generated/resources/'), '--existing', file('src/main/resources/')
-            mods {
-                blockreality {
-                    source sourceSets.main
-                }
-            }
+            mods { blockreality { source sourceSets.main } }
         }
     }
 }
 
-sourceSets.main.resources { srcDir 'src/generated/resources' }
-
-repositories {
-    mavenCentral()
-}
-
 dependencies {
-    minecraft 'net.minecraftforge:forge:1.20.1-47.2.0'
+    minecraft "net.minecraftforge:forge:1.20.1-47.2.0"
 }
 
 jar {
     manifest {
         attributes([
-            'Specification-Title'     : 'blockreality',
-            'Specification-Vendor'    : 'BlockRealityTeam',
-            'Specification-Version'   : '1',
+            'Specification-Title'     : 'block-reality-api',
+            'Specification-Vendor'    : 'BlockReality',
             'Implementation-Title'    : project.name,
             'Implementation-Version'  : project.jar.archiveVersion,
-            'Implementation-Vendor'   : 'BlockRealityTeam',
-            'Implementation-Timestamp': new Date().format("yyyy-MM-dd'T'HH:mm:ssZ")
+            'Implementation-Vendor'   : 'BlockReality'
         ])
-    }
-}
-
-jar.finalizedBy('reobfJar')
-
-publishing {
-    publications {
-        mavenJava(MavenPublication) {
-            artifact jar
-        }
-    }
-    repositories {
-        maven {
-            url "file://${project.projectDir}/mcmodsrepo"
-        }
     }
 }
 
@@ -112,26 +49,13 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
-// ============================================================
-// BR-002: 自動複製 jar 到 Prism Launcher 開發實例
-// 請將下方路徑改為你電腦上 BR-Dev 實例的 mods 資料夾實際路徑
-// Windows 範例: C:/Users/YourName/AppData/Roaming/PrismLauncher/instances/BR-Dev/.minecraft/mods
-// ============================================================
-def devInstanceMods = System.getenv("BR_DEV_MODS_PATH") ?: ""
-
-task copyToDevInstance(type: Copy, dependsOn: reobfJar) {
-    if (devInstanceMods) {
-        from jar.archiveFile
-        into devInstanceMods
-        doLast {
-            println "[BlockReality] Copied jar to BR-Dev: ${devInstanceMods}"
-        }
-    } else {
-        doLast {
-            println "[BlockReality] BR_DEV_MODS_PATH not set, skipping copyToDevInstance."
-            println "[BlockReality] Set environment variable BR_DEV_MODS_PATH to enable auto-copy."
-        }
-    }
+// 自動推送到測試實例
+task copyToDevInstance(type: Copy, dependsOn: jar) {
+    def prismBase = System.getProperty('os.name').contains('Windows')
+        ? "$System.env.APPDATA/PrismLauncher"
+        : "$System.getProperty('user.home')/.local/share/PrismLauncher"
+    from jar.archiveFile
+    into "$prismBase/instances/BR-Dev/.minecraft/mods/"
+    rename { 'block-reality-api.jar' }
 }
-
-build.finalizedBy(copyToDevInstance)
+build.finalizedBy copyToDevInstance
