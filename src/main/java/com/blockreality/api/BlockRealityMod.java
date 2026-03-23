@@ -1,6 +1,8 @@
 package com.blockreality.api;
 
+import com.blockreality.api.command.PhysicsTestCommand;
 import com.blockreality.api.command.SnapshotTestCommand;
+import com.blockreality.api.physics.PhysicsExecutor;
 import com.blockreality.api.sidecar.SidecarBridge;
 import com.google.gson.JsonObject;
 import net.minecraftforge.common.MinecraftForge;
@@ -31,22 +33,27 @@ public class BlockRealityMod {
     @SubscribeEvent
     public void onRegisterCommands(RegisterCommandsEvent event) {
         SnapshotTestCommand.register(event.getDispatcher());
-        LOGGER.info("[BlockReality] 已註冊指令: /br_test_snapshot");
+        PhysicsTestCommand.register(event.getDispatcher());
+        LOGGER.info("[BlockReality] 已註冊指令: /br_test_snapshot, /br_test_physics");
     }
 
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent event) {
+        // 啟動 Sidecar IPC
         try {
             SidecarBridge.getInstance().start();
             LOGGER.info("[BlockReality] Sidecar 已啟動");
         } catch (Exception e) {
             LOGGER.error("[BlockReality] Sidecar 啟動失敗，CAD 功能將不可用", e);
         }
+
+        // 啟動物理運算執行緒池
+        PhysicsExecutor.start();
     }
 
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
-        // BR-003 DoD: ping 測試驗證 IPC 通道
+        // BR-003 DoD: ping 測試
         try {
             JsonObject result = SidecarBridge.getInstance().call("ping", new JsonObject(), 3000);
             LOGGER.info("[BlockReality] Sidecar ping 測試成功: {}", result);
@@ -57,7 +64,8 @@ public class BlockRealityMod {
 
     @SubscribeEvent
     public void onServerStopping(ServerStoppingEvent event) {
+        PhysicsExecutor.shutdown();
         SidecarBridge.getInstance().stop();
-        LOGGER.info("[BlockReality] Sidecar 已停止");
+        LOGGER.info("[BlockReality] PhysicsExecutor & Sidecar 已停止");
     }
 }
