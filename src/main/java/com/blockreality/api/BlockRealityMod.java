@@ -1,8 +1,10 @@
 package com.blockreality.api;
 
+import com.blockreality.api.command.SnapshotTestCommand;
 import com.blockreality.api.sidecar.SidecarBridge;
 import com.google.gson.JsonObject;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.event.server.ServerStartedEvent;
@@ -24,6 +26,12 @@ public class BlockRealityMod {
 
         MinecraftForge.EVENT_BUS.register(this);
         LOGGER.info("[BlockReality] Mod 初始化完成 — v0.1.0-alpha");
+    }
+
+    @SubscribeEvent
+    public void onRegisterCommands(RegisterCommandsEvent event) {
+        SnapshotTestCommand.register(event.getDispatcher());
+        LOGGER.info("[BlockReality] 已註冊指令: /br_test_snapshot");
     }
 
     @SubscribeEvent
