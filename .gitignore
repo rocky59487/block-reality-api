@@ -28,6 +28,10 @@ bin/
 # Forge MDK 下載的本地快取
 forge-*-installer.jar
 
+# Node.js
+node_modules/
+sidecar/dist/
+
 # OS 系統檔
 .DS_Store
 Thumbs.db

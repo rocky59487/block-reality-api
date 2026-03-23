@@ -1,9 +1,11 @@
 package com.blockreality.api;
 
 import com.blockreality.api.sidecar.SidecarBridge;
+import com.google.gson.JsonObject;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.event.server.ServerStartedEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.event.server.ServerStoppingEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -31,6 +33,17 @@ public class BlockRealityMod {
             LOGGER.info("[BlockReality] Sidecar 已啟動");
         } catch (Exception e) {
             LOGGER.error("[BlockReality] Sidecar 啟動失敗，CAD 功能將不可用", e);
+        }
+    }
+
+    @SubscribeEvent
+    public void onServerStarted(ServerStartedEvent event) {
+        // BR-003 DoD: ping 測試驗證 IPC 通道
+        try {
+            JsonObject result = SidecarBridge.getInstance().call("ping", new JsonObject(), 3000);
+            LOGGER.info("[BlockReality] Sidecar ping 測試成功: {}", result);
+        } catch (Exception e) {
+            LOGGER.warn("[BlockReality] Sidecar ping 測試失敗（非致命）: {}", e.getMessage());
         }
     }
 
