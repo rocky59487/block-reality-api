@@ -1,74 +1,18 @@
-plugins {
-    id 'java'
-    id 'eclipse'
-    id 'idea'
-    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
-}
+// 根專案：共用設定套用到所有 subproject
+subprojects {
+    apply plugin: 'java'
 
-group   = 'com.blockreality'
-version = '0.1.0-alpha'
-archivesBaseName = 'block-reality-api'
+    java {
+        toolchain.languageVersion = JavaLanguageVersion.of(17)
+    }
 
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(17)
-}
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net' }
+        maven { url = 'https://libraries.minecraft.net' }
+        mavenCentral()
+    }
 
-minecraft {
-    mappings channel: 'official', version: '1.20.1'
-    // ★ AT: 讓 Forge 在編譯期修改 Explosion.radius 為 public
-    accessTransformer = file('src/main/resources/META-INF/accesstransformer.cfg')
-    runs {
-        client {
-            workingDirectory project.file('run')
-            property 'forge.logging.console.level', 'debug'
-            mods { blockreality { source sourceSets.main } }
-        }
-        server {
-            workingDirectory project.file('run')
-            property 'forge.logging.console.level', 'debug'
-            mods { blockreality { source sourceSets.main } }
-        }
+    tasks.withType(JavaCompile).configureEach {
+        options.encoding = 'UTF-8'
     }
 }
-
-dependencies {
-    minecraft "net.minecraftforge:forge:1.20.1-47.2.0"
-
-    // JSR-305 thread-safety annotations (@ThreadSafe, @GuardedBy, @Immutable)
-    compileOnly 'com.google.code.findbugs:jsr305:3.0.2'
-
-    // JUnit 5 for unit / integration tests
-    testImplementation 'org.junit.jupiter:junit-jupiter:5.9.3'
-    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
-}
-
-test {
-    useJUnitPlatform()
-}
-
-jar {
-    manifest {
-        attributes([
-            'Specification-Title'     : 'block-reality-api',
-            'Specification-Vendor'    : 'BlockReality',
-            'Implementation-Title'    : project.name,
-            'Implementation-Version'  : project.jar.archiveVersion,
-            'Implementation-Vendor'   : 'BlockReality'
-        ])
-    }
-}
-
-tasks.withType(JavaCompile).configureEach {
-    options.encoding = 'UTF-8'
-}
-
-// 自動推送到測試實例
-task copyToDevInstance(type: Copy, dependsOn: jar) {
-    def prismBase = System.getProperty('os.name').contains('Windows')
-        ? "$System.env.APPDATA/PrismLauncher"
-        : "$System.getProperty('user.home')/.local/share/PrismLauncher"
-    from jar.archiveFile
-    into "$prismBase/instances/BR-Dev/.minecraft/mods/"
-    rename { 'block-reality-api.jar' }
-}
-// build.finalizedBy copyToDevInstance  // 已停用：只在需要推 Prism 時手動執行 copyToDevInstance

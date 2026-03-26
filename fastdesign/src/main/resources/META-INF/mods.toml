@@ -1,0 +1,30 @@
+modLoader   = "javafml"
+loaderVersion = "[47,)"
+license     = "MIT"
+
+[[mods]]
+modId           = "fastdesign"
+version         = "0.1.0-alpha"
+displayName     = "Fast Design"
+description     = '''三視角 CAD 建築設計模組'''
+
+[[dependencies.fastdesign]]
+    modId      = "forge"
+    mandatory  = true
+    versionRange = "[47.2.0,)"
+    ordering   = "NONE"
+    side       = "BOTH"
+
+[[dependencies.fastdesign]]
+    modId      = "minecraft"
+    mandatory  = true
+    versionRange = "[1.20.1,1.21)"
+    ordering   = "NONE"
+    side       = "BOTH"
+
+[[dependencies.fastdesign]]
+    modId      = "blockreality"
+    mandatory  = true
+    versionRange = "[0.1.0-alpha,)"
+    ordering   = "AFTER"
+    side       = "BOTH"

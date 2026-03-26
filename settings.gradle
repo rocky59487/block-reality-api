@@ -5,4 +5,7 @@ pluginManagement {
     }
 }
 
-rootProject.name = 'block-reality-api'
+rootProject.name = 'block-reality'
+
+include 'api'
+include 'fastdesign'
