@@ -7,10 +7,21 @@ import net.minecraftforge.fml.loading.FMLPaths;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.*;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.PrintWriter;
+import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -36,10 +47,8 @@ public class SidecarBridge {
         private static final SidecarBridge INSTANCE = new SidecarBridge();
     }
 
-    // v3-fix: 添加 readResolve 支持序列化
-    private Object readResolve() {
-        return Holder.INSTANCE;
-    }
+    // ★ new-fix N7: 移除原本的 readResolve() — SidecarBridge 未實作 Serializable，
+    // 該方法永遠不會被 JVM 序列化機制呼叫，是誤導性的死代碼。
 
     private Process nodeProcess;
     private PrintWriter writer;
@@ -52,7 +61,11 @@ public class SidecarBridge {
     // v3-fix: 添加狀態鎖，保護 running 和 writer 的原子性檢查
     private final ReadWriteLock stateLock = new ReentrantReadWriteLock();
 
-    // RPC id 計數器
+    /**
+     * RPC id 計數器。
+     * ★ Round 5 fix: 使用正數模運算防止 Integer.MAX_VALUE 溢位後產生負 ID，
+     * JSON-RPC 2.0 spec 建議 id 為正整數。getAndUpdate 保證原子性。
+     */
     private final AtomicInteger rpcId = new AtomicInteger(0);
 
     // v3-fix: 使用帶時間戳的封裝類替代直接使用 CompletableFuture
@@ -75,25 +88,63 @@ public class SidecarBridge {
     private final ConcurrentHashMap<Integer, PendingEntry> pending =
             new ConcurrentHashMap<>();
 
-    // v3-fix: 添加定期清理執行器
-    private final ScheduledExecutorService cleanupExecutor =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "BR-Sidecar-Cleanup");
-                t.setDaemon(true);
-                return t;
-            });
+    // ★ R3-8 fix: cleanupExecutor 改為延遲建立，避免 stop() 後永久關閉、
+    // start() 無法重啟的生命週期問題。同時避免未 start() 時就有後台任務在跑。
+    private ScheduledExecutorService cleanupExecutor;
+    private java.util.concurrent.ScheduledFuture<?> cleanupFuture;
 
     // 讀取執行緒
     private volatile Thread readerThread;
     private volatile boolean running = false;
 
+    /**
+     * ★ v4-fix: 安全白名單 — sidecar 腳本必須位於 GAMEDIR/blockreality/sidecar/ 目錄下。
+     * ★ review-fix #1: 原先設為 GAMEDIR/sidecar/，與 start() 無參版本的 defaultScript
+     *   (GAMEDIR/blockreality/sidecar/dist/sidecar.js) 不匹配，導致永遠觸發 SecurityException。
+     */
+    private static final Path SIDECAR_BASE_DIR =
+        FMLPaths.GAMEDIR.get().resolve("blockreality").resolve("sidecar");
+
     private SidecarBridge() {
-        // v3-fix: 啟動定期清理任務
-        startCleanupTask();
+        // ★ R3-8 fix: 不再在建構子中啟動清理任務，
+        // 改為在 start() 中動態建立 executor + 排程清理任務。
     }
 
     public static SidecarBridge getInstance() {
         return Holder.INSTANCE;
+    }
+
+    /**
+     * ★ v4-fix: 驗證 sidecar 腳本路徑安全性。
+     * 腳本必須位於 GAMEDIR/sidecar/ 目錄下，且不得包含路徑穿越。
+     *
+     * @param script 腳本路徑
+     * @throws SecurityException 若路徑不在白名單目錄下
+     * @throws IOException 若路徑正規化失敗
+     */
+    private static void validateScriptPath(Path script) throws IOException {
+        if (script == null) {
+            throw new SecurityException("[SidecarBridge] sidecarScript 不可為 null");
+        }
+        Path normalized = script.toAbsolutePath().normalize();
+        Path baseDirNormalized = SIDECAR_BASE_DIR.toAbsolutePath().normalize();
+
+        if (!normalized.startsWith(baseDirNormalized)) {
+            throw new SecurityException(String.format(
+                "[SidecarBridge] 安全限制：腳本路徑 '%s' 不在允許目錄 '%s' 下。" +
+                "請將 sidecar 腳本放在 GAMEDIR/sidecar/ 目錄中。",
+                normalized, baseDirNormalized));
+        }
+
+        // 防止符號連結逸出
+        Path realPath = normalized.toRealPath();
+        if (!realPath.startsWith(baseDirNormalized)) {
+            throw new SecurityException(String.format(
+                "[SidecarBridge] 安全限制：腳本實際路徑 '%s'（符號連結解析後）不在允許目錄下。",
+                realPath));
+        }
+
+        LOGGER.debug("[SidecarBridge] 腳本路徑驗證通過: {}", realPath);
     }
 
     // v3-fix: 修改點4 - 健康檢查相關欄位
@@ -104,7 +155,7 @@ public class SidecarBridge {
 
     // v3-fix: 修改點4 - 添加定期清理過期請求的方法（帶健康檢查）
     private void startCleanupTask() {
-        cleanupExecutor.scheduleAtFixedRate(() -> {
+        cleanupFuture = cleanupExecutor.scheduleAtFixedRate(() -> {
             try {
                 long now = System.currentTimeMillis();
                 AtomicInteger cleanedCount = new AtomicInteger(0);
@@ -130,7 +181,7 @@ public class SidecarBridge {
                     LOGGER.debug("Cleanup task completed: {} expired requests removed", cleanedCount.get());
                 }
 
-            } catch (Exception e) {
+            } catch (RuntimeException e) {
                 // v3-fix: 修改點4 - 記錄錯誤計數
                 cleanupErrorCount++;
                 LOGGER.error("清理任務執行異常 (error count: {})", cleanupErrorCount, e);
@@ -214,7 +265,11 @@ public class SidecarBridge {
      * @param nodeExecutable Node.js 執行檔路徑（null 表示用系統 PATH 的 node）
      * @param sidecarScript  sidecar 入口腳本絕對路徑
      */
-    public synchronized void start(String nodeExecutable, Path sidecarScript) throws IOException {
+    // ★ review-fix #9: 移除 synchronized — 完全依靠 stateLock.writeLock() 保護狀態，
+    // 避免 this + stateLock 兩個鎖對象的巢狀取得造成 deadlock 風險
+    public void start(String nodeExecutable, Path sidecarScript) throws IOException {
+        // ★ v4-fix: 路徑白名單驗證 — 防止任意腳本注入
+        validateScriptPath(sidecarScript);
         // v3-fix: 使用寫鎖保護狀態檢查和修改
         stateLock.writeLock().lock();
         try {
@@ -261,6 +316,18 @@ public class SidecarBridge {
 
             running = true;
 
+            // ★ R3-8 fix: 每次 start() 重新建立 cleanupExecutor，
+            // 避免上次 stop() 已 shutdown 後無法再排程的問題。
+            if (cleanupExecutor == null || cleanupExecutor.isShutdown()) {
+                cleanupExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "BR-Sidecar-Cleanup");
+                    t.setDaemon(true);
+                    return t;
+                });
+            }
+            startCleanupTask();
+            resetCleanupHealth();
+
             // 非同步讀取回應的執行緒
             readerThread = new Thread(this::readLoop, "BR-Sidecar-Reader");
             readerThread.setDaemon(true);
@@ -295,16 +362,22 @@ public class SidecarBridge {
     public JsonObject call(String method, JsonObject params, long timeoutMs)
             throws SidecarException, InterruptedException {
 
-        // v3-fix: 使用讀鎖保護 running 和 writer 的原子性檢查
+        // ★ new-fix N1: readLock 只保護「running 檢查 + 送出請求」這段快速操作。
+        // 原本把 future.get()（最多 30s 阻塞）包在 readLock 內，導致 stop() 的 writeLock
+        // 在等待期間永遠無法取得 — 服務器關閉時最多被阻塞 timeoutMs 秒。
+        // 解法：在 readLock 內只做 O(1) 的 running check + request send，然後釋放 lock，
+        // 再在 lock 外 await future。
+        int id = -1;
+        CompletableFuture<JsonObject> future = new CompletableFuture<>();
+
         stateLock.readLock().lock();
-        int id = -1;  // v3-fix: 在 try 外部聲明 id，以便 catch 塊中使用
         try {
             if (!running || writer == null) {
                 throw new SidecarException("Sidecar 未啟動或 writer 尚未初始化");
             }
 
-            id = rpcId.incrementAndGet();
-            CompletableFuture<JsonObject> future = new CompletableFuture<>();
+            // ★ Round 5 fix: 保證正數 ID，防止 Integer.MAX_VALUE 溢位成負數
+            id = rpcId.updateAndGet(prev -> (prev >= Integer.MAX_VALUE - 1) ? 1 : prev + 1);
             // v3-fix: 使用 PendingEntry 封裝，包含時間戳
             pending.put(id, new PendingEntry(future));
 
@@ -327,25 +400,31 @@ public class SidecarBridge {
                         pending.remove(id);
                         throw new SidecarException("Writer encountered error");
                     }
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     pending.remove(id);
                     throw new SidecarException("Failed to send request", e);
                 }
             }
-
-            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
-        } catch (TimeoutException e) {
-            // v3-fix: 使用已記錄的 id 清理 pending
+            // ★ N1: 請求已送出，立即釋放 readLock，不在鎖內阻塞等待
+        } catch (SidecarException e) {
             if (id != -1) pending.remove(id);
-            throw new SidecarException("RPC 逾時: method=" + method + ", id=" + id);
-        } catch (ExecutionException e) {
-            if (id != -1) pending.remove(id);
-            throw new SidecarException("RPC 執行失敗: " + e.getCause().getMessage(), e.getCause());
-        } catch (Exception e) {
-            if (id != -1) pending.remove(id);
-            throw new SidecarException("RPC 呼叫失敗: " + e.getMessage(), e);
+            throw e;
         } finally {
             stateLock.readLock().unlock();
+        }
+
+        // ★ N1: 在 readLock 外 await，stop() 可隨時取得 writeLock
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            pending.remove(id);
+            throw new SidecarException("RPC 逾時: method=" + method + ", id=" + id);
+        } catch (ExecutionException e) {
+            pending.remove(id);
+            throw new SidecarException("RPC 執行失敗: " + e.getCause().getMessage(), e.getCause());
+        } catch (RuntimeException e) {
+            pending.remove(id);
+            throw new SidecarException("RPC 呼叫失敗: " + e.getMessage(), e);
         }
     }
 
@@ -362,7 +441,7 @@ public class SidecarBridge {
                 JsonObject response;
                 try {
                     response = GSON.fromJson(payload, JsonObject.class);
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     LOGGER.error("Sidecar 回傳非 JSON: {}", payload);
                     continue;
                 }
@@ -422,7 +501,7 @@ public class SidecarBridge {
                     shutdown.add("id", null);
                     writer.println(GSON.toJson(shutdown));
                     writer.flush();
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     LOGGER.warn("發送 shutdown 通知失敗", e);
                 }
                 writer.close();
@@ -476,14 +555,17 @@ public class SidecarBridge {
             pending.clear();
 
             // v3-fix: 6. 關閉清理執行器
-            cleanupExecutor.shutdown();
-            try {
-                if (!cleanupExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+            // ★ R3-8 fix: null 檢查 — stop() 可能在 start() 之前被呼叫
+            if (cleanupExecutor != null) {
+                cleanupExecutor.shutdown();
+                try {
+                    if (!cleanupExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                        cleanupExecutor.shutdownNow();
+                    }
+                } catch (InterruptedException e) {
                     cleanupExecutor.shutdownNow();
+                    Thread.currentThread().interrupt();
                 }
-            } catch (InterruptedException e) {
-                cleanupExecutor.shutdownNow();
-                Thread.currentThread().interrupt();
             }
 
             LOGGER.info("Sidecar 已停止");

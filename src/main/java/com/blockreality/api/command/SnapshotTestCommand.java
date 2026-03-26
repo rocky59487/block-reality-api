@@ -88,7 +88,7 @@ public class SnapshotTestCommand {
                     source.sendSuccess(() -> Component.literal(
                         String.format("[BR Snapshot] Background thread read %d blocks — no ConcurrentModificationException", finalCount)
                     ), false);
-                } catch (Exception e) {
+                } catch (RuntimeException e) {
                     source.sendFailure(Component.literal("[BR Snapshot] Background thread FAILED: " + e.getMessage()));
                 }
             }, "BR-Snapshot-Verifier");

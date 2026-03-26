@@ -1,9 +1,14 @@
 package com.blockreality.api.physics;
 
+import com.blockreality.api.block.RBlockEntity;
+import com.blockreality.api.material.DefaultMaterial;
+import com.blockreality.api.material.RMaterial;
+import com.blockreality.api.material.VanillaMaterialMap;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -92,7 +97,13 @@ public class SnapshotBuilder {
                                 BlockState mcState = section.getBlockState(x & 15, y & 15, z & 15);
 
                                 if (!mcState.isAir()) {
-                                    RBlockState rState = translate(mcState);
+                                    // ★ T-4 fix: 嘗試讀取 RBlockEntity 以取得精確材料參數
+                                    // chunk.getBlockEntity() 是 HashMap 查找 O(1)，不會加載 chunk
+                                    BlockEntity be = chunk.getBlockEntity(new BlockPos(x, y, z),
+                                        LevelChunk.EntityCreationType.CHECK);
+                                    RBlockState rState = (be != null)
+                                        ? translateWithEntity(mcState, be)
+                                        : translate(mcState);
                                     // 索引: lx + sizeX * (ly + sizeY * lz)
                                     int idx = (x - minX) + sizeX * ((y - minY) + sizeY * (z - minZ));
                                     blocks[idx] = rState;
@@ -119,7 +130,9 @@ public class SnapshotBuilder {
 
     /**
      * 將 Minecraft BlockState 轉換為物理引擎用的 RBlockState。
-     * TODO: 後續接上 Material Registry，從 JSON/config 載入材料參數
+     *
+     * 優先讀取 RBlockEntity 的精確材料參數（R-unit system），
+     * 若非 RBlock 則 fallback 到原版方塊的預設材料映射。
      */
     private static RBlockState translate(BlockState mcState) {
         String blockId = BuiltInRegistries.BLOCK.getKey(mcState.getBlock()).toString();
@@ -127,29 +140,64 @@ public class SnapshotBuilder {
         // 錨定判定：基岩、屏障等不可破壞方塊
         boolean isAnchor = mcState.is(Blocks.BEDROCK) || mcState.is(Blocks.BARRIER);
 
-        // 預設物理參數（石材級別）— 後續由 Material Registry 覆蓋
-        float mass = 2400f;               // kg/m³ (石頭密度)
-        float compressive = 30f;          // MPa
-        float tensile = 3f;               // MPa
+        // 使用 DefaultMaterial 映射原版方塊
+        RMaterial mat = mapVanillaBlock(mcState);
 
-        // 依材質分類給予不同參數
-        if (mcState.is(Blocks.BEDROCK) || mcState.is(Blocks.BARRIER)) {
-            mass = Float.MAX_VALUE;
-            compressive = Float.MAX_VALUE;
-            tensile = Float.MAX_VALUE;
-        } else if (mcState.is(Blocks.IRON_BLOCK)) {
-            mass = 7870f; compressive = 250f; tensile = 400f;
-        } else if (mcState.is(Blocks.OAK_PLANKS) || mcState.is(Blocks.OAK_LOG)
-                || mcState.is(Blocks.SPRUCE_PLANKS) || mcState.is(Blocks.BIRCH_PLANKS)) {
-            mass = 600f; compressive = 5f; tensile = 10f;
-        } else if (mcState.is(Blocks.GLASS) || mcState.is(Blocks.GLASS_PANE)) {
-            mass = 2500f; compressive = 100f; tensile = 0.5f;
-        } else if (mcState.is(Blocks.SAND) || mcState.is(Blocks.GRAVEL)) {
-            mass = 1600f; compressive = 0.1f; tensile = 0f;
-        } else if (mcState.is(Blocks.OBSIDIAN)) {
-            mass = 2600f; compressive = 200f; tensile = 5f;
+        return new RBlockState(
+            blockId,
+            (float) mat.getDensity(),
+            (float) mat.getRcomp(),
+            (float) mat.getRtens(),
+            isAnchor
+        );
+    }
+
+    /**
+     * 帶 BlockEntity 感知的轉譯 — 用於精確快照。
+     * 若方塊有 RBlockEntity，直接使用其材料參數（最精確）。
+     */
+    static RBlockState translateWithEntity(BlockState mcState, BlockEntity be) {
+        if (be instanceof RBlockEntity rbe) {
+            RMaterial mat = rbe.getMaterial();
+            return new RBlockState(
+                mat.getMaterialId(),
+                (float) mat.getDensity(),
+                (float) mat.getRcomp(),
+                (float) mat.getRtens(),
+                rbe.isAnchored()
+            );
         }
+        return translate(mcState);
+    }
 
-        return new RBlockState(blockId, mass, compressive, tensile, isAnchor);
+    /**
+     * 原版方塊 → DefaultMaterial 映射。
+     *
+     * 使用 VanillaMaterialMap（JSON 數據驅動），覆蓋 100+ 原版方塊。
+     * 未列入映射表的方塊 fallback 到 STONE。
+     */
+    private static RMaterial mapVanillaBlock(BlockState mcState) {
+        String blockId = BuiltInRegistries.BLOCK.getKey(mcState.getBlock()).toString();
+        return VanillaMaterialMap.getInstance().getMaterial(blockId);
+    }
+
+    /**
+     * 以中心點周圍 radius=2 的鄰域擷取快照（26 個鄰域方塊）。
+     * 用於局部物理分析的上下文感知。
+     *
+     * 標準立方體鄰域：
+     *   - 中心點 ± 2 在 X/Y/Z 軸上
+     *   - 總計：(2*2+1)³ - 1 = 125 - 1 = 124 個鄰域方塊
+     *   - 實務上通常只用 26 方向（6面+12邊+8角），此實現則用完整立方體
+     *
+     * @param level  Minecraft ServerLevel
+     * @param center 中心點座標
+     * @return 包含中心及周圍方塊的 RWorldSnapshot
+     */
+    public static RWorldSnapshot captureNeighborhood(ServerLevel level, BlockPos center) {
+        final int radius = 2;
+        BlockPos start = center.offset(-radius, -radius, -radius);
+        BlockPos end = center.offset(radius, radius, radius);
+        return capture(level, start, end);
     }
 }

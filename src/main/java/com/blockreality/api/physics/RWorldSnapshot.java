@@ -1,6 +1,8 @@
 package com.blockreality.api.physics;
 
 import net.minecraft.core.BlockPos;
+import java.util.Collections;
+import java.util.Set;
 
 /**
  * 唯讀的世界快照容器。
@@ -10,6 +12,8 @@ import net.minecraft.core.BlockPos;
  * → Y 軸連續排列，物理引擎沿柱狀 (column) 掃描時 cache 命中率最高。
  *
  * 不持有任何 net.minecraft.world.level.Level 參照。
+ *
+ * v3fix §4.2: 支援 changedPositions 以追蹤快照內已修改的位置。
  */
 public class RWorldSnapshot {
 
@@ -20,8 +24,21 @@ public class RWorldSnapshot {
     private final int sizeX, sizeY, sizeZ;
     private final RBlockState[] blocks;
     private final long captureTimeNs;
+    private final Set<BlockPos> changedPositions;
 
     public RWorldSnapshot(BlockPos start, BlockPos end) {
+        this(start, end, Collections.emptySet());
+    }
+
+    /**
+     * Public constructor with changed positions tracking.
+     * Useful for incremental updates and physics analysis.
+     *
+     * @param start             Start corner (inclusive)
+     * @param end               End corner (inclusive)
+     * @param changedPositions  Set of positions that were modified (can be empty)
+     */
+    public RWorldSnapshot(BlockPos start, BlockPos end, Set<BlockPos> changedPositions) {
         this.startX = Math.min(start.getX(), end.getX());
         this.startY = Math.min(start.getY(), end.getY());
         this.startZ = Math.min(start.getZ(), end.getZ());
@@ -40,12 +57,21 @@ public class RWorldSnapshot {
 
         this.blocks = new RBlockState[totalBlocks];
         this.captureTimeNs = 0;
+        this.changedPositions = changedPositions != null ? changedPositions : Collections.emptySet();
     }
 
     /** 內部建構子，由 SnapshotBuilder 使用（帶計時） */
     RWorldSnapshot(int startX, int startY, int startZ,
                    int sizeX, int sizeY, int sizeZ,
                    RBlockState[] blocks, long captureTimeNs) {
+        this(startX, startY, startZ, sizeX, sizeY, sizeZ, blocks, captureTimeNs, Collections.emptySet());
+    }
+
+    /** 內部建構子，由 SnapshotBuilder 使用（帶計時及變更位置） */
+    RWorldSnapshot(int startX, int startY, int startZ,
+                   int sizeX, int sizeY, int sizeZ,
+                   RBlockState[] blocks, long captureTimeNs,
+                   Set<BlockPos> changedPositions) {
         this.startX = startX;
         this.startY = startY;
         this.startZ = startZ;
@@ -54,6 +80,7 @@ public class RWorldSnapshot {
         this.sizeZ = sizeZ;
         this.blocks = blocks;
         this.captureTimeNs = captureTimeNs;
+        this.changedPositions = changedPositions != null ? changedPositions : Collections.emptySet();
     }
 
     /**
@@ -97,4 +124,44 @@ public class RWorldSnapshot {
 
     /** 快照擷取耗時 (毫秒) */
     public double getCaptureTimeMs() { return captureTimeNs / 1_000_000.0; }
+
+    /**
+     * 以 1D 索引直接存取方塊（零物件配置路徑）。
+     * 索引公式: lx + sizeX * (ly + sizeY * lz)
+     */
+    public RBlockState getBlockByIndex(int index) {
+        if (index < 0 || index >= blocks.length) return RBlockState.AIR;
+        RBlockState state = blocks[index];
+        return state != null ? state : RBlockState.AIR;
+    }
+
+    /**
+     * 將 1D 索引解碼為世界絕對座標。
+     */
+    public BlockPos indexToWorldPos(int index) {
+        int lx = index % sizeX;
+        int ly = (index / sizeX) % sizeY;
+        int lz = index / (sizeX * sizeY);
+        return new BlockPos(startX + lx, startY + ly, startZ + lz);
+    }
+
+    /**
+     * Get the set of block positions that were modified in this snapshot.
+     * v3fix §4.2: Used for tracking incremental changes during physics analysis.
+     *
+     * @return Unmodifiable set of changed block positions
+     */
+    public Set<BlockPos> getChangedPositions() {
+        return Collections.unmodifiableSet(changedPositions);
+    }
+
+    /**
+     * Check if a specific position was marked as changed.
+     *
+     * @param pos The block position to check
+     * @return true if the position is in the changed set
+     */
+    public boolean isPositionChanged(BlockPos pos) {
+        return changedPositions.contains(pos);
+    }
 }
