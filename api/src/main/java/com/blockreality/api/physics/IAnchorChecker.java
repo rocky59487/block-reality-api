@@ -10,6 +10,8 @@ import java.util.Set;
  * 判斷每個節點是否能連通到錨定點。
  *
  * 實作：AnchorContinuityChecker（含 dirty flag 快取）
+ *
+ * @since 1.0.0
  */
 public interface IAnchorChecker {
     /**

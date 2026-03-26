@@ -24,6 +24,8 @@ import java.util.List;
  * 設計模式 (Design Pattern):
  *   支撐樹 (Support Tree) — 每個方塊記住「我的重量傳給誰 (Parent)」，形成一棵往下長的樹。
  *   效能：O(H) 放置，O(K) 破壞，H = 層高，K = 受影響的依賴者數量。
+ *
+ * @since 1.0.0
  */
 public interface ILoadPathManager {
 

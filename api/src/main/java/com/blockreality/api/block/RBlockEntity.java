@@ -29,6 +29,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 效能設計：
  *   - 同步節流：50ms 間隔，避免高頻 sendBlockUpdated 壅塞網路
  *   - 批量更新：setStressLevelBatch() 跳過逐一同步，flushSync() 統一觸發
+ *
+ * @since 1.0.0
  */
 public class RBlockEntity extends BlockEntity {
 

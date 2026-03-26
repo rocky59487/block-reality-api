@@ -34,6 +34,8 @@ import net.minecraft.server.level.ServerLevel;
  * 線程安全 (Thread Safety):
  *   Method calls are thread-safe for concurrent access from game and physics threads.
  *   All operations are localized to the affected blocks only.
+ *
+ * @since 1.0.0
  */
 public interface IFusionDetector {
 

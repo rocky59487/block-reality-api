@@ -10,6 +10,8 @@ package com.blockreality.api.material;
  * 設計哲學：
  *   Minecraft 每格 = 1m³，材料參數直接對應現實工程值，
  *   讓結構計算可與現實數據交叉驗證。
+ *
+ * @since 1.0.0
  */
 public interface RMaterial {
 

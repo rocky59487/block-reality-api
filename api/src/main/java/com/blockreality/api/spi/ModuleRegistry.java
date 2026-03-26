@@ -41,6 +41,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
  *
  * Registration is typically done during mod initialization or when a module
  * is loaded. Modules must call register*() methods with their implementations.
+ *
+ * @since 1.0.0
  */
 @ThreadSafe
 public class ModuleRegistry {

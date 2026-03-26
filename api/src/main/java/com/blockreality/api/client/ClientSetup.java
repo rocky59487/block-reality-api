@@ -2,7 +2,6 @@ package com.blockreality.api.client;
 
 import com.blockreality.api.BlockRealityMod;
 import com.blockreality.api.spi.ModuleRegistry;
-import com.blockreality.fastdesign.client.HologramRenderer;
 import com.mojang.blaze3d.platform.InputConstants;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -68,10 +67,10 @@ public class ClientSetup {
         @SubscribeEvent
         public static void onRenderLevel(RenderLevelStageEvent event) {
             StressHeatmapRenderer.onRenderLevelStage(event);
-            HologramRenderer.onRenderLevelStage(event);
             AnchorPathRenderer.render(event);
             GhostBlockRenderer.onRenderLevel(event);
             // ★ Fire render event to all registered module render layers
+            // （FastDesign 的 HologramRenderer 由 fastdesign 子專案自行掛接）
             ModuleRegistry.fireRenderEvent(event);
         }
 

@@ -14,6 +14,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
+import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -55,11 +56,20 @@ public class FdKeyBindings {
     }
 
     /**
-     * FORGE 事件匯流排 — 監聽按鍵觸發 + 幽靈方塊預覽更新
+     * FORGE 事件匯流排 — 監聽按鍵觸發 + 幽靈方塊預覽更新 + Hologram 渲染
+     *
+     * 注意：HologramRenderer 原本在 api/ClientSetup 中被硬引用，
+     * api/mod 分離後改由 fastdesign 自行在此掛接。
      */
     @Mod.EventBusSubscriber(modid = FastDesignMod.MOD_ID,
         bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
     public static class ForgeEvents {
+
+        @SubscribeEvent
+        public static void onRenderLevel(RenderLevelStageEvent event) {
+            HologramRenderer.onRenderLevelStage(event);
+        }
+
         @SubscribeEvent
         public static void onClientTick(TickEvent.ClientTickEvent event) {
             if (event.phase != TickEvent.Phase.END) return;

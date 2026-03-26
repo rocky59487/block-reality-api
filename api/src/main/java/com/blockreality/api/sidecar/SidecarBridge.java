@@ -33,6 +33,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  *   bridge.start();
  *   JsonObject result = bridge.call("dualContouring", params, 10_000);
  *   bridge.stop();
+ *
+ * @since 1.0.0
  */
 public class SidecarBridge {
 
@@ -112,6 +114,21 @@ public class SidecarBridge {
 
     public static SidecarBridge getInstance() {
         return Holder.INSTANCE;
+    }
+
+    /**
+     * 檢查 sidecar 子行程是否正在執行。
+     *
+     * @return true 若 sidecar 已啟動且連線中
+     * @since 1.0.0
+     */
+    public boolean isRunning() {
+        stateLock.readLock().lock();
+        try {
+            return running && nodeProcess != null && nodeProcess.isAlive();
+        } finally {
+            stateLock.readLock().unlock();
+        }
     }
 
     /**

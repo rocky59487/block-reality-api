@@ -310,7 +310,7 @@ public class FdActionPacket {
             PlayerSelectionManager.SelectionBox selection =
                 PlayerSelectionManager.getSelection(player.getUUID());
 
-            var result = NurbsExporter.export(level, selection);
+            var result = NurbsExporter.export(level, selection, NurbsExporter.ExportOptions.defaults());
 
             player.displayClientMessage(
                 Component.literal("§a[Fast Design] NURBS 匯出完成"),

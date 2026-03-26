@@ -10,6 +10,8 @@ package com.blockreality.api.physics;
  *   - UnionFindEngine (現有 BFS 引擎，速度優先)
  *   - SupportPathAnalyzer (帶權重應力 BFS)
  *   未來可換成 FEM 求解器而不改介面
+ *
+ * @since 1.0.0
  */
 public interface IStructureEngine {
     /**

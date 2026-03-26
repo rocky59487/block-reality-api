@@ -4,9 +4,9 @@ license     = "MIT"
 
 [[mods]]
 modId           = "fastdesign"
-version         = "0.1.0-alpha"
+version         = "1.0.0"
 displayName     = "Fast Design"
-description     = '''三視角 CAD 建築設計模組'''
+description     = '''三視角 CAD 建築設計模組 — 基於 Block Reality API 的快捷建造、藍圖管理、NURBS 匯出與全息投影系統。'''
 
 [[dependencies.fastdesign]]
     modId      = "forge"
@@ -25,6 +25,6 @@ description     = '''三視角 CAD 建築設計模組'''
 [[dependencies.fastdesign]]
     modId      = "blockreality"
     mandatory  = true
-    versionRange = "[0.1.0-alpha,)"
+    versionRange = "[1.0.0,)"
     ordering   = "AFTER"
     side       = "BOTH"

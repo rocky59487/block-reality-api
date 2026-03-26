@@ -10,6 +10,8 @@ import net.minecraft.core.BlockPos;
  * 未來可換：真實 SPH 粒子法 / FEM
  *
  * 實作：SPHStressEngine（CompletableFuture 異步版本）
+ *
+ * @since 1.0.0
  */
 public interface IStressEngine {
     /**

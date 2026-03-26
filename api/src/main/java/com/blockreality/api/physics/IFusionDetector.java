@@ -6,6 +6,8 @@ package com.blockreality.api.physics;
  * 純計算，無 Minecraft API 呼叫。
  *
  * 實作：RCFusionDetector（靜態工廠方法版本）
+ *
+ * @since 1.0.0
  */
 public interface IFusionDetector {
     /**

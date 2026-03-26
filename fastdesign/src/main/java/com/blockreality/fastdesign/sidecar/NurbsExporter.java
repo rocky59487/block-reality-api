@@ -5,8 +5,6 @@ import com.blockreality.api.command.PlayerSelectionManager;
 import com.blockreality.api.material.RMaterial;
 import com.blockreality.api.sidecar.SidecarBridge;
 import com.blockreality.fastdesign.config.FastDesignConfig;
-import com.google.gson.Gson;
-import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import net.minecraft.core.BlockPos;
@@ -17,28 +15,77 @@ import net.minecraftforge.fml.loading.FMLPaths;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.OutputStreamWriter;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 /**
  * NURBS 匯出器 — v3fix §2.4
+ *
+ * 透過 SidecarBridge（JSON-RPC 2.0 持久連線）呼叫 MctoNurbs：
+ *   method: "dualContouring"
+ *   params: { blocks: [{relX,relY,relZ,blockState,rMaterialId,...}],
+ *             options: {smoothing,resolution,outputPath} }
+ *   result: { success, outputPath, blockCount }
  */
 public class NurbsExporter {
 
     private static final Logger LOGGER = LogManager.getLogger("FD-NURBS");
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
 
+    // ─────────────────────────────────────────────────────────
+    // 匯出選項
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * 控制匯出幾何的品質與風格。
+     *
+     * @param smoothing  0.0 = 完全體素（Greedy Mesh，最快，無平滑）
+     *                   0.01~1.0 = SDF + Dual Contouring，數值越大曲面越平滑
+     * @param resolution SDF 子體素解析度倍率（1~4）。越高越細緻，指數級增加記憶體與時間。
+     * @param outputPath STEP 輸出路徑，null 代表自動生成時間戳路徑
+     */
+    public record ExportOptions(double smoothing, int resolution, String outputPath) {
+
+        public static final double MIN_SMOOTHING = 0.0;
+        public static final double MAX_SMOOTHING = 1.0;
+        public static final int    MIN_RESOLUTION = 1;
+        public static final int    MAX_RESOLUTION = 4;
+
+        /** 預設：完全體素，解析度 1（最快，最準確） */
+        public static ExportOptions defaults() {
+            return new ExportOptions(0.0, 1, null);
+        }
+
+        /** 平滑預設：中度曲面化 */
+        public static ExportOptions smooth() {
+            return new ExportOptions(0.5, 1, null);
+        }
+
+        public ExportOptions {
+            if (smoothing < MIN_SMOOTHING || smoothing > MAX_SMOOTHING)
+                throw new IllegalArgumentException(
+                    "smoothing must be in [0.0, 1.0], got " + smoothing);
+            if (resolution < MIN_RESOLUTION || resolution > MAX_RESOLUTION)
+                throw new IllegalArgumentException(
+                    "resolution must be in [1, 4], got " + resolution);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────
+    // 公開 API
+    // ─────────────────────────────────────────────────────────
+
+    /** 使用預設選項（完全體素）匯出 */
     public static JsonObject export(ServerLevel level, PlayerSelectionManager.SelectionBox box)
+            throws IOException, InterruptedException, TimeoutException {
+        return export(level, box, ExportOptions.defaults());
+    }
+
+    /** 使用自訂選項匯出 */
+    public static JsonObject export(ServerLevel level,
+                                    PlayerSelectionManager.SelectionBox box,
+                                    ExportOptions opts)
             throws IOException, InterruptedException, TimeoutException {
 
         JsonArray blockArray = collectBlockData(level, box);
@@ -53,27 +100,61 @@ public class NurbsExporter {
                 " blocks (max " + maxExport + "). Reduce selection size.");
         }
 
+        // 解析輸出路徑
+        Path outputDir = FMLPaths.CONFIGDIR.get().resolve("blockreality/exports");
+        Files.createDirectories(outputDir);
+        String resolvedOutputPath = (opts.outputPath() != null && !opts.outputPath().isBlank())
+            ? opts.outputPath()
+            : outputDir.resolve("export_" + System.currentTimeMillis() + ".step").toString();
+
+        // 組建符合 MctoNurbs ConvertRequest 的 JSON
+        JsonObject options = new JsonObject();
+        options.addProperty("smoothing",   opts.smoothing());
+        options.addProperty("resolution",  opts.resolution());
+        options.addProperty("outputPath",  resolvedOutputPath);
+
         JsonObject payload = new JsonObject();
-        payload.add("blocks", blockArray);
-        payload.addProperty("originX", box.min().getX());
-        payload.addProperty("originY", box.min().getY());
-        payload.addProperty("originZ", box.min().getZ());
+        payload.add("blocks",   blockArray);
+        payload.add("options",  options);
 
         int timeoutSec = FastDesignConfig.getExportTimeoutSeconds();
-        try {
-            JsonObject result = SidecarBridge.getInstance().call("export", payload, timeoutSec * 1000);
-            LOGGER.info("[NURBS] Export via SidecarBridge succeeded");
-            return result;
-        } catch (Exception e) {
-            LOGGER.warn("[NURBS] SidecarBridge export failed, falling back to ProcessBuilder: {}",
-                e.getMessage());
+
+        // 確保 SidecarBridge 已啟動
+        SidecarBridge bridge = SidecarBridge.getInstance();
+        if (!bridge.isRunning()) {
+            try {
+                bridge.start();
+                LOGGER.info("[NURBS] SidecarBridge auto-started for export");
+            } catch (IOException e) {
+                throw new IOException("無法啟動 Sidecar：" + e.getMessage(), e);
+            }
         }
 
-        return exportViaProcess(payload);
+        try {
+            JsonObject result = bridge.call("dualContouring", payload, (long) timeoutSec * 1000);
+            LOGGER.info("[NURBS] Export succeeded via dualContouring (smoothing={}, res={})",
+                opts.smoothing(), opts.resolution());
+            return result;
+        } catch (SidecarBridge.SidecarException e) {
+            throw new IOException("NURBS sidecar RPC 失敗: " + e.getMessage(), e);
+        }
     }
 
+    // ─────────────────────────────────────────────────────────
+    // 內部實作
+    // ─────────────────────────────────────────────────────────
+
+    /**
+     * 收集選取區域內所有 RBlockEntity 的座標與材料資訊。
+     * 欄位名稱符合 MctoNurbs BlueprintBlock 介面：
+     *   relX/relY/relZ  — 相對於選取區最小角的本地坐標
+     *   blockState      — Minecraft block state 字串（MctoNurbs 用於幾何分組）
+     *   rMaterialId     — Block Reality 材料 ID
+     *   rcomp/rtens/stressLevel/isAnchored — 擴充欄位，MctoNurbs 忽略但不報錯，
+     *                     保留供未來材料感知幾何使用
+     */
     private static JsonArray collectBlockData(ServerLevel level,
-                                               PlayerSelectionManager.SelectionBox box) {
+                                              PlayerSelectionManager.SelectionBox box) {
         JsonArray arr = new JsonArray();
         BlockPos origin = box.min();
 
@@ -87,89 +168,20 @@ public class NurbsExporter {
 
             RMaterial mat = rbe.getMaterial();
             JsonObject obj = new JsonObject();
-            obj.addProperty("x", immutable.getX() - origin.getX());
-            obj.addProperty("y", immutable.getY() - origin.getY());
-            obj.addProperty("z", immutable.getZ() - origin.getZ());
-            obj.addProperty("material", mat.getMaterialId());
-            obj.addProperty("rcomp", mat.getRcomp());
-            obj.addProperty("rtens", mat.getRtens());
+            obj.addProperty("relX",        immutable.getX() - origin.getX());
+            obj.addProperty("relY",        immutable.getY() - origin.getY());
+            obj.addProperty("relZ",        immutable.getZ() - origin.getZ());
+            obj.addProperty("blockState",  state.toString());
+            obj.addProperty("rMaterialId", mat.getMaterialId());
+            // 擴充欄位（MctoNurbs 忽略，保留供未來材料感知幾何使用）
+            obj.addProperty("rcomp",       mat.getRcomp());
+            obj.addProperty("rtens",       mat.getRtens());
             obj.addProperty("stressLevel", rbe.getStressLevel());
-            obj.addProperty("isAnchored", rbe.isAnchored());
+            obj.addProperty("isAnchored",  rbe.isAnchored());
             arr.add(obj);
         }
 
         return arr;
     }
 
-    private static JsonObject exportViaProcess(JsonObject payload)
-            throws IOException, InterruptedException, TimeoutException {
-
-        Path sidecarScript = resolveSidecarScript();
-        String jsonInput = GSON.toJson(payload);
-
-        Path outputDir = FMLPaths.CONFIGDIR.get().resolve("blockreality/exports");
-        Files.createDirectories(outputDir);
-
-        ProcessBuilder pb = new ProcessBuilder("node", sidecarScript.toAbsolutePath().toString());
-        pb.redirectErrorStream(false);
-        pb.environment().put("NURBS_OUTPUT_DIR", outputDir.toString());
-
-        Process process = pb.start();
-
-        try (var writer = new OutputStreamWriter(process.getOutputStream(), StandardCharsets.UTF_8)) {
-            writer.write(jsonInput);
-            writer.flush();
-        }
-
-        ExecutorService ioPool = Executors.newFixedThreadPool(2);
-        try {
-            Future<String> stdoutFuture = ioPool.submit(() ->
-                new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8));
-            Future<String> stderrFuture = ioPool.submit(() ->
-                new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8));
-
-            int fallbackTimeout = FastDesignConfig.getExportTimeoutSeconds();
-            boolean finished = process.waitFor(fallbackTimeout, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                throw new TimeoutException("NURBS sidecar timed out after " + fallbackTimeout + "s");
-            }
-
-            try {
-                String stderr = stderrFuture.get(5, TimeUnit.SECONDS);
-                if (!stderr.isBlank()) {
-                    LOGGER.warn("[NURBS stderr] {}", stderr);
-                }
-            } catch (ExecutionException | TimeoutException e) {
-                LOGGER.warn("[NURBS] Could not read stderr: {}", e.getMessage());
-            }
-
-            int exitCode = process.exitValue();
-            if (exitCode != 0) {
-                throw new IOException("NURBS sidecar exited with code " + exitCode);
-            }
-
-            String stdout = stdoutFuture.get(5, TimeUnit.SECONDS);
-            return GSON.fromJson(stdout.trim(), JsonObject.class);
-        } catch (ExecutionException e) {
-            throw new IOException("Failed to read sidecar output: " + e.getMessage());
-        } finally {
-            ioPool.shutdownNow();
-            // 確保 process streams 關閉，防止 file descriptor 洩漏
-            try { process.getInputStream().close(); } catch (IOException ignored) {}
-            try { process.getErrorStream().close(); } catch (IOException ignored) {}
-            try { process.getOutputStream().close(); } catch (IOException ignored) {}
-            if (process.isAlive()) { process.destroyForcibly(); }
-        }
-    }
-
-    private static Path resolveSidecarScript() throws FileNotFoundException {
-        Path path = FMLPaths.MODSDIR.get().resolve("sidecar/nurbs_pipeline.js");
-        if (!Files.exists(path)) {
-            throw new FileNotFoundException(
-                "NURBS sidecar script not found: " + path +
-                "\nPlace nurbs_pipeline.js in mods/sidecar/ directory");
-        }
-        return path;
-    }
 }

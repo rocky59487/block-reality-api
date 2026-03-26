@@ -15,6 +15,8 @@ import java.util.List;
  *   - 全部使用相對座標（relX/Y/Z）以支援跨世界載入
  *   - version 欄位支援未來格式遷移
  *   - RMaterial 以 ID 字串儲存，載入時由 DefaultMaterial/DynamicMaterial 重建
+ *
+ * @since 1.0.0
  */
 public class Blueprint {
 

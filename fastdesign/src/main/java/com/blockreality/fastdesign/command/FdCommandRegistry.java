@@ -15,6 +15,7 @@ import com.blockreality.api.registry.BRBlocks;
 import com.blockreality.fastdesign.sidecar.NurbsExporter;
 import com.google.gson.JsonObject;
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
@@ -93,7 +94,14 @@ public class FdCommandRegistry {
                         StringArgumentType.getString(ctx, "name")))))
 
             .then(Commands.literal("export")
-                .executes(ctx -> exportNurbs(ctx.getSource())))
+                .executes(ctx -> exportNurbs(ctx.getSource()))
+                .then(Commands.argument("smoothing", DoubleArgumentType.doubleArg(0.0, 1.0))
+                    .executes(ctx -> exportNurbs(ctx.getSource(),
+                        DoubleArgumentType.getDouble(ctx, "smoothing")))
+                    .then(Commands.argument("resolution", IntegerArgumentType.integer(1, 4))
+                        .executes(ctx -> exportNurbs(ctx.getSource(),
+                            DoubleArgumentType.getDouble(ctx, "smoothing"),
+                            IntegerArgumentType.getInteger(ctx, "resolution"))))))
 
             .then(Commands.literal("undo")
                 .executes(ctx -> undoLast(ctx.getSource())))
@@ -380,7 +388,26 @@ public class FdCommandRegistry {
         }
     }
 
+    /**
+     * /fd export [smoothing] [resolution]
+     *
+     * smoothing  0.0 = 完全體素 (Greedy Mesh)，1.0 = 最大曲面化 (SDF+DC)
+     * resolution SDF 解析度倍率 1~4（越高越細緻，預設 1）
+     *
+     * 範例：
+     *   /fd export            → smoothing=0.0, resolution=1（預設體素）
+     *   /fd export 0.5        → 中度平滑，解析度 1
+     *   /fd export 0.8 2      → 高度平滑，解析度 2
+     */
     private static int exportNurbs(CommandSourceStack src) {
+        return exportNurbs(src, 0.0, 1);
+    }
+
+    private static int exportNurbs(CommandSourceStack src, double smoothing) {
+        return exportNurbs(src, smoothing, 1);
+    }
+
+    private static int exportNurbs(CommandSourceStack src, double smoothing, int resolution) {
         ServerPlayer player = src.getPlayer();
         if (player == null) return fail(src, "Requires a player");
 
@@ -388,22 +415,60 @@ public class FdCommandRegistry {
             return fail(src, "Set pos1 and pos2 first!");
         }
 
+        // 驗證參數範圍
+        if (smoothing < NurbsExporter.ExportOptions.MIN_SMOOTHING ||
+                smoothing > NurbsExporter.ExportOptions.MAX_SMOOTHING) {
+            return fail(src, "smoothing must be between 0.0 and 1.0");
+        }
+        if (resolution < NurbsExporter.ExportOptions.MIN_RESOLUTION ||
+                resolution > NurbsExporter.ExportOptions.MAX_RESOLUTION) {
+            return fail(src, "resolution must be between 1 and 4");
+        }
+
         var box = PlayerSelectionManager.getSelection(player.getUUID());
+        var opts = new NurbsExporter.ExportOptions(smoothing, resolution, null);
+
+        String modeDesc = smoothing == 0.0
+            ? "完全體素"
+            : String.format("曲面化 smoothing=%.2f res=%d", smoothing, resolution);
 
         src.sendSuccess(() -> Component.literal(
-            "§6[FD] §fStarting NURBS export... (this may take up to 30 seconds)"
+            "§6[FD] §fStarting NURBS export (" + modeDesc + ")…"
         ), false);
 
         ServerLevel level = (ServerLevel) player.level();
         CompletableFuture.runAsync(() -> {
             try {
-                JsonObject result = NurbsExporter.export(level, box);
+                JsonObject result = NurbsExporter.export(level, box, opts);
                 level.getServer().execute(() -> {
-                    String objPath = result.has("outputPath")
+                    String outPath = result.has("outputPath")
                         ? result.get("outputPath").getAsString() : "(unknown)";
+                    int blockCount = result.has("blockCount")
+                        ? result.get("blockCount").getAsInt() : -1;
+
+                    // 材料統計摘要
+                    StringBuilder matSummary = new StringBuilder();
+                    if (result.has("materialBreakdown")) {
+                        var breakdown = result.getAsJsonObject("materialBreakdown");
+                        for (var entry : breakdown.entrySet()) {
+                            var stats = entry.getValue().getAsJsonObject();
+                            int bc = stats.has("blockCount") ? stats.get("blockCount").getAsInt() : 0;
+                            int fc = stats.has("faceCount") ? stats.get("faceCount").getAsInt() : 0;
+                            if (!matSummary.isEmpty()) matSummary.append("§7, ");
+                            matSummary.append("§e").append(entry.getKey())
+                                      .append("§f(").append(bc).append("b/").append(fc).append("f)");
+                        }
+                    }
+
                     src.sendSuccess(() -> Component.literal(
-                        "§6[FD] §aExport complete! §fFile: §7" + objPath
+                        "§6[FD] §aExport complete! §f" + blockCount + " blocks → §7" + outPath
                     ), true);
+
+                    if (!matSummary.isEmpty()) {
+                        src.sendSuccess(() -> Component.literal(
+                            "§6[FD] §fMaterials: " + matSummary
+                        ), false);
+                    }
                 });
             } catch (Exception e) {
                 level.getServer().execute(() ->

@@ -15,6 +15,8 @@ import java.util.Set;
  * - Periodic tick to advance curing time
  *
  * Thread-safe for concurrent access from game and physics threads.
+ *
+ * @since 1.0.0
  */
 public interface ICuringManager {
 

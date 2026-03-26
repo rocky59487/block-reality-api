@@ -25,6 +25,8 @@ import java.util.Set;
  * - Support concurrent read/write operations
  * - Fire CableTensionEvent when tension changes significantly
  * - Return broken cables from tickCables() for removal by caller
+ *
+ * @since 1.0.0
  */
 public interface ICableManager {
 

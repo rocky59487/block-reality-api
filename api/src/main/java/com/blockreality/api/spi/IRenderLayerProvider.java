@@ -34,6 +34,8 @@ import net.minecraftforge.api.distmarker.OnlyIn;
  *     }
  * }
  * </pre>
+ *
+ * @since 1.0.0
  */
 @OnlyIn(Dist.CLIENT)
 public interface IRenderLayerProvider {

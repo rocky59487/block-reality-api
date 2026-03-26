@@ -28,6 +28,8 @@ import net.minecraft.commands.CommandSourceStack;
  *     }
  * }
  * </pre>
+ *
+ * @since 1.0.0
  */
 public interface ICommandProvider {
 

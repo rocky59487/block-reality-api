@@ -26,6 +26,8 @@ import java.util.Optional;
  *     }
  * }
  * </pre>
+ *
+ * @since 1.0.0
  */
 public interface IMaterialRegistry {
 
