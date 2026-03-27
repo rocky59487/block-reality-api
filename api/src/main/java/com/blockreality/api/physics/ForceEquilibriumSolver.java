@@ -163,6 +163,8 @@ public class ForceEquilibriumSolver {
         final double weight;
         final boolean isAnchor;
         final List<BlockPos> dependents;
+        /** 有效截面積 (m²) — 雕刻形狀可能小於 1.0 */
+        final double effectiveArea;
         double supportForce;
         double totalForce;
         double lastTotalForce;
@@ -170,7 +172,7 @@ public class ForceEquilibriumSolver {
 
         NodeState(BlockPos pos, RMaterial material, double weight, double supportForce,
                   double totalForce, boolean isAnchor, List<BlockPos> dependents,
-                  double lastTotalForce, boolean converged) {
+                  double lastTotalForce, boolean converged, double effectiveArea) {
             this.pos = pos;
             this.material = material;
             this.weight = weight;
@@ -180,6 +182,7 @@ public class ForceEquilibriumSolver {
             this.dependents = dependents;
             this.lastTotalForce = lastTotalForce;
             this.converged = converged;
+            this.effectiveArea = effectiveArea;
         }
     }
 
@@ -395,7 +398,8 @@ public class ForceEquilibriumSolver {
                 isAnchor,
                 dependents,
                 initialForce,   // lastTotalForce
-                false           // converged 初始 = false
+                false,          // converged 初始 = false
+                BLOCK_AREA      // effectiveArea: 預設全塊，由 solveWithDiagnostics 覆寫
             );
             states.put(pos, ns);
         }
@@ -604,7 +608,8 @@ public class ForceEquilibriumSolver {
         if (node.material == null) return false;
         double rcomp = node.material.getRcomp();
         if (rcomp <= 0) return false;
-        double capacity = rcomp * 1e6 * BLOCK_AREA;  // Pa × m² = N
+        // 使用方塊的實際截面積（雕刻形狀可能 < 1.0m²）
+        double capacity = rcomp * 1e6 * node.effectiveArea;  // Pa × m² = N
         return capacity >= load;
     }
 
@@ -617,7 +622,8 @@ public class ForceEquilibriumSolver {
     private static double calculateUtilization(NodeState ns, RMaterial mat) {
         double compCapacity = mat.getRcomp() * 1e6;  // Pa
         if (compCapacity <= 0) return 1.0;
-        double actualStress = ns.totalForce / BLOCK_AREA;  // F/A = Pa
+        // 使用方塊的實際截面積（雕刻形狀可能 < 1.0m²）
+        double actualStress = ns.totalForce / ns.effectiveArea;  // F/A = Pa
         return actualStress / compCapacity;
     }
 }

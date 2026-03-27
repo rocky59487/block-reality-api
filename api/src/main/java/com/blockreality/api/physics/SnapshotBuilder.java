@@ -1,6 +1,7 @@
 package com.blockreality.api.physics;
 
 import com.blockreality.api.block.RBlockEntity;
+import com.blockreality.api.chisel.ChiselState;
 import com.blockreality.api.material.DefaultMaterial;
 import com.blockreality.api.material.RMaterial;
 import com.blockreality.api.material.VanillaMaterialMap;
@@ -160,12 +161,16 @@ public class SnapshotBuilder {
     static RBlockState translateWithEntity(BlockState mcState, BlockEntity be) {
         if (be instanceof RBlockEntity rbe) {
             RMaterial mat = rbe.getMaterial();
+            ChiselState cs = rbe.getChiselState();
             return new RBlockState(
                 mat.getMaterialId(),
-                (float) mat.getDensity(),
+                (float) (mat.getDensity() * cs.fillRatio()),  // 質量按填充率縮放
                 (float) mat.getRcomp(),
                 (float) mat.getRtens(),
-                rbe.isAnchored()
+                rbe.isAnchored(),
+                (float) cs.crossSectionArea(),
+                (float) cs.momentOfInertiaX(),
+                (float) cs.sectionModulusX()
             );
         }
         return translate(mcState);

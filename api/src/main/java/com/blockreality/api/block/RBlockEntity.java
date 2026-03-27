@@ -1,5 +1,8 @@
 package com.blockreality.api.block;
 
+import com.blockreality.api.chisel.ChiselState;
+import com.blockreality.api.chisel.SubBlockShape;
+import com.blockreality.api.chisel.VoxelGrid;
 import com.blockreality.api.material.BlockType;
 import com.blockreality.api.material.DefaultMaterial;
 import com.blockreality.api.material.DynamicMaterial;
@@ -51,6 +54,9 @@ public class RBlockEntity extends BlockEntity {
     private static final String TAG_DYN_RTENS = "br_dyn_rtens";
     private static final String TAG_DYN_RSHEAR = "br_dyn_rshear";
     private static final String TAG_DYN_DENSITY = "br_dyn_density";
+    // 雕刻狀態 NBT 標籤
+    private static final String TAG_CHISEL_SHAPE = "br_chisel_shape";
+    private static final String TAG_CHISEL_VOXELS = "br_chisel_voxels";
 
     // ─── 同步節流 ───
     private static final long SYNC_INTERVAL_MS = 50;
@@ -77,6 +83,9 @@ public class RBlockEntity extends BlockEntity {
 
     /** 目前承受的總載重 (自重 + 所有依賴者的重量)，單位 kg */
     private float currentLoad = 0.0f;
+
+    /** 雕刻狀態 — 預設為完整方塊，向後相容 */
+    private ChiselState chiselState = ChiselState.FULL;
 
     // ─── 區塊卸載標記 ───
     /** ★ H-1: 區塊正在卸載時為 true，setRemoved() 中跳過崩塌邏輯 */
@@ -128,10 +137,19 @@ public class RBlockEntity extends BlockEntity {
     public void setPreFusionMaterial(@Nullable RMaterial mat) { this.preFusionMaterial = mat; setChanged(); }
 
     /**
-     * 取得自重 (kg) — density × 1m³ = density
+     * 取得自重 (kg) — density × fillRatio。
+     * 半磚 fillRatio=0.5 → 重量減半。
      */
     public float getSelfWeight() {
-        return (float) material.getDensity();
+        return (float) (material.getDensity() * chiselState.fillRatio());
+    }
+
+    public ChiselState getChiselState() { return chiselState; }
+
+    public void setChiselState(ChiselState state) {
+        this.chiselState = state != null ? state : ChiselState.FULL;
+        setChanged();
+        syncToClient();
     }
 
     // ─── Setters (with sync) ───
@@ -292,6 +310,13 @@ public class RBlockEntity extends BlockEntity {
         if (preFusionMaterial != null) {
             tag.putString("br_prefusion_id", preFusionMaterial.getMaterialId());
         }
+        // 雕刻狀態：模板只存 shape name，CUSTOM 額外存體素資料
+        if (!chiselState.isFull()) {
+            tag.putString(TAG_CHISEL_SHAPE, chiselState.shape().getSerializedName());
+            if (chiselState.isCustom()) {
+                chiselState.voxelGrid().saveToTag(tag);
+            }
+        }
     }
 
     @Override
@@ -341,6 +366,18 @@ public class RBlockEntity extends BlockEntity {
             this.preFusionMaterial = DefaultMaterial.fromId(tag.getString("br_prefusion_id"));
         } else {
             this.preFusionMaterial = null;
+        }
+        // 雕刻狀態復原（向後相容：無此標籤時預設 FULL）
+        if (tag.contains(TAG_CHISEL_SHAPE)) {
+            SubBlockShape shape = SubBlockShape.fromString(tag.getString(TAG_CHISEL_SHAPE));
+            if (shape == SubBlockShape.CUSTOM && tag.contains(TAG_CHISEL_VOXELS)) {
+                VoxelGrid grid = VoxelGrid.loadFromTag(tag);
+                this.chiselState = new ChiselState(shape, grid);
+            } else {
+                this.chiselState = ChiselState.ofShape(shape);
+            }
+        } else {
+            this.chiselState = ChiselState.FULL;
         }
     }
 

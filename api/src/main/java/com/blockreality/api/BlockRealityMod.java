@@ -61,6 +61,7 @@ public class BlockRealityMod {
                 output.accept(BRBlocks.R_REBAR_ITEM.get());
                 output.accept(BRBlocks.R_STEEL_ITEM.get());
                 output.accept(BRBlocks.R_TIMBER_ITEM.get());
+                output.accept(BRBlocks.CHISEL.get());
             })
             .build()
     );

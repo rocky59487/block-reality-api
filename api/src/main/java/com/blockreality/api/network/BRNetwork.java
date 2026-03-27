@@ -46,5 +46,13 @@ public class BRNetwork {
             AnchorPathSyncPacket::handle
         );
 
+        CHANNEL.registerMessage(
+            packetId.getAndIncrement(),
+            ChiselSyncPacket.class,
+            ChiselSyncPacket::encode,
+            ChiselSyncPacket::decode,
+            ChiselSyncPacket::handle
+        );
+
     }
 }
