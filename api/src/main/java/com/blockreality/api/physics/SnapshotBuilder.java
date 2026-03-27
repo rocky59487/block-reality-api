@@ -1,6 +1,7 @@
 package com.blockreality.api.physics;
 
 import com.blockreality.api.block.RBlockEntity;
+import com.blockreality.api.chisel.ChiselState;
 import com.blockreality.api.material.DefaultMaterial;
 import com.blockreality.api.material.RMaterial;
 import com.blockreality.api.material.VanillaMaterialMap;
@@ -52,10 +53,11 @@ public class SnapshotBuilder {
         int sizeZ = maxZ - minZ + 1;
         int totalBlocks = sizeX * sizeY * sizeZ;
 
-        if (totalBlocks > RWorldSnapshot.MAX_SNAPSHOT_BLOCKS) {
+        int effectiveMax = RWorldSnapshot.getMaxSnapshotBlocks();
+        if (totalBlocks > effectiveMax) {
             throw new IllegalArgumentException(
-                String.format("Snapshot exceeds MAX_SNAPSHOT_BLOCKS (%d). Attempted: %dx%dx%d = %d",
-                    RWorldSnapshot.MAX_SNAPSHOT_BLOCKS, sizeX, sizeY, sizeZ, totalBlocks)
+                String.format("Snapshot exceeds max_snapshot_blocks (%d). Attempted: %dx%dx%d = %d",
+                    effectiveMax, sizeX, sizeY, sizeZ, totalBlocks)
             );
         }
 
@@ -159,12 +161,19 @@ public class SnapshotBuilder {
     static RBlockState translateWithEntity(BlockState mcState, BlockEntity be) {
         if (be instanceof RBlockEntity rbe) {
             RMaterial mat = rbe.getMaterial();
+            ChiselState cs = rbe.getChiselState();
+            // ★ audit-fix M-6: 傳遞 X 和 Y 軸的截面屬性
             return new RBlockState(
                 mat.getMaterialId(),
-                (float) mat.getDensity(),
+                (float) (mat.getDensity() * cs.fillRatio()),  // 質量按填充率縮放
                 (float) mat.getRcomp(),
                 (float) mat.getRtens(),
-                rbe.isAnchored()
+                rbe.isAnchored(),
+                (float) cs.crossSectionArea(),
+                (float) cs.momentOfInertiaX(),
+                (float) cs.sectionModulusX(),
+                (float) cs.momentOfInertiaY(),
+                (float) cs.sectionModulusY()
             );
         }
         return translate(mcState);

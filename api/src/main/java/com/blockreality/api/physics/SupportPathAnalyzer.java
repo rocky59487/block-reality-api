@@ -1,6 +1,7 @@
 package com.blockreality.api.physics;
 
 import com.blockreality.api.block.RBlockEntity;
+import com.blockreality.api.chisel.ChiselState;
 import com.blockreality.api.config.BRConfig;
 import com.blockreality.api.material.BlockType;
 import com.blockreality.api.material.DefaultMaterial;
@@ -196,7 +197,8 @@ public class SupportPathAnalyzer {
 
                 BlockState neighborState = level.getBlockState(neighborPos);
                 RMaterial neighborMat = getMaterial(level, neighborPos, neighborState);
-                float neighborWeight = (float) neighborMat.getDensity(); // 1m³ 自重
+                ChiselState neighborChisel = getChiselState(level, neighborPos);
+                float neighborWeight = (float) (neighborMat.getDensity() * neighborChisel.fillRatio()); // 按填充率縮放自重
 
                 // ─── 力臂計算 ───
                 // 水平方向移動 = 力臂 +1
@@ -251,7 +253,8 @@ public class SupportPathAnalyzer {
                     // W = 截面模數 = I/y = (bh³/12)/(h/2) = bh²/6
                     // 對 1m × 1m 方塊：W = 1×1²/6 = 1/6 ≈ 0.1667 m³
                     RMaterial connectionMat = getConnectionMaterial(level, neighborPos, current.pos);
-                    double sectionModulus = BLOCK_SECTION_MODULUS; // m³ (幾何截面模數)
+                    // 使用鄰居方塊的實際截面模數（雕刻形狀影響抗彎能力）
+                    double sectionModulus = neighborChisel.sectionModulusX(); // m³
                     double momentCapacity = connectionMat.getRtens() * 1e6 * sectionModulus; // N⋅m
 
                     if (moment > momentCapacity) {
@@ -279,7 +282,8 @@ public class SupportPathAnalyzer {
                     // 載重力 F = mass(kg) × g(m/s²) = N
                     // 壓碎容量 = Rcomp(MPa) × 1e6(→Pa) × A(m²) = N
                     double loadForce = newLoad * GRAVITY; // N
-                    double compCapacity = neighborMat.getRcomp() * 1e6 * BLOCK_CROSS_SECTION_AREA; // N
+                    // 使用鄰居方塊的實際截面積（雕刻形狀影響抗壓容量）
+                    double compCapacity = neighborMat.getRcomp() * 1e6 * neighborChisel.crossSectionArea(); // N
                     if (loadForce > compCapacity) {
                         failures.put(neighborPos, new FailureReason(
                             FailureType.CRUSHING,
@@ -380,6 +384,17 @@ public class SupportPathAnalyzer {
      * ★ M-3 fix: 未錨定的 RC_NODE，Rtens 加成歸零，
      * 僅保留素混凝土數值（想法.docx 規定）。
      */
+    /**
+     * 取得方塊的雕刻狀態。非 RBlock 回傳完整方塊預設值。
+     */
+    private static ChiselState getChiselState(ServerLevel level, BlockPos pos) {
+        BlockEntity be = level.getBlockEntity(pos);
+        if (be instanceof RBlockEntity rbe) {
+            return rbe.getChiselState();
+        }
+        return ChiselState.FULL;
+    }
+
     private static RMaterial getMaterial(ServerLevel level, BlockPos pos, BlockState state) {
         BlockEntity be = level.getBlockEntity(pos);
         if (be instanceof RBlockEntity rbe) {

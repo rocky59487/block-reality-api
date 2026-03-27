@@ -1,5 +1,6 @@
 package com.blockreality.api.physics;
 
+import com.blockreality.api.chisel.ChiselState;
 import com.blockreality.api.material.RMaterial;
 import net.minecraft.core.BlockPos;
 
@@ -91,6 +92,30 @@ public record BeamElement(
             UNIT_AREA,
             UNIT_LENGTH
         );
+    }
+
+    /**
+     * 雕刻感知版本 — 使用兩端截面的較弱值（瓶頸原理）。
+     *
+     * 垂直梁使用 min(Ix, Iy)；水平梁可由呼叫端選擇主軸。
+     */
+    public static BeamElement create(BlockPos a, BlockPos b,
+                                     RMaterial matA, RMaterial matB,
+                                     ChiselState csA, ChiselState csB) {
+        Objects.requireNonNull(matA, "matA must not be null for beam " + a);
+        Objects.requireNonNull(matB, "matB must not be null for beam " + b);
+
+        double E = compositeStiffness(matA, matB);
+        RMaterial weaker = matA.getCombinedStrength() <= matB.getCombinedStrength() ? matA : matB;
+
+        // 取兩端截面的較弱值（瓶頸原理）
+        double area = Math.min(csA.crossSectionArea(), csB.crossSectionArea());
+        double I = Math.min(
+            Math.min(csA.momentOfInertiaX(), csA.momentOfInertiaY()),
+            Math.min(csB.momentOfInertiaX(), csB.momentOfInertiaY())
+        );
+
+        return new BeamElement(a, b, weaker, E, I, area, UNIT_LENGTH);
     }
 
     /**

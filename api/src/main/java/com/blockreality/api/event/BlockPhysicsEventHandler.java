@@ -11,7 +11,9 @@ import com.blockreality.api.material.VanillaMaterialMap;
 import com.blockreality.api.physics.AnchorContinuityChecker;
 import com.blockreality.api.physics.ForceEquilibriumSolver;
 import com.blockreality.api.physics.LoadPathEngine;
+import com.blockreality.api.physics.PhysicsScheduler;
 import com.blockreality.api.physics.RCFusionDetector;
+import com.blockreality.api.physics.StructureIslandRegistry;
 import com.blockreality.api.physics.UnionFindEngine;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -61,6 +63,13 @@ public class BlockPhysicsEventHandler {
         // 立即標記快取為髒（事件執行緒即可，ConcurrentHashMap 安全）
         AnchorContinuityChecker.getInstance().markDirty(pos);
         UnionFindEngine.notifyStructureChanged(pos);
+
+        // ★ Phase 1: 登錄到 Island Registry
+        long epoch = UnionFindEngine.getStructureEpoch();
+        int islandId = StructureIslandRegistry.registerBlock(pos, epoch);
+
+        // ★ Phase 7: 排程物理重算
+        PhysicsScheduler.markDirty(islandId, epoch);
 
         level.getServer().execute(() -> {
             // RC 融合偵測（在 BE 初始化後）
@@ -115,8 +124,16 @@ public class BlockPhysicsEventHandler {
         AnchorContinuityChecker.getInstance().markDirty(pos);
         UnionFindEngine.notifyStructureChanged(pos);
 
+        // ★ Phase 1: 從 Island Registry 註銷（在方塊消失前處理）
+        long epoch = UnionFindEngine.getStructureEpoch();
+        int islandId = StructureIslandRegistry.getIslandId(pos);
+
         // 延遲到方塊實際消失後執行崩塌（用快取資料，不讀 BE）
         level.getServer().execute(() -> {
+            // ★ Phase 1: 延遲執行 island 分裂檢查（方塊已消失）
+            StructureIslandRegistry.unregisterBlock(level, pos, epoch);
+            // ★ Phase 7: 排程物理重算（原 island 及可能的分裂 island）
+            PhysicsScheduler.markDirty(islandId, epoch);
             // ★ W-5: RC 融合降級檢查（破壞鋼筋/混凝土時，鄰居 RC_NODE 降級）
             int downgrades = RCFusionDetector.checkAndDowngrade(level, pos, cachedBlockType);
             if (downgrades > 0) {
@@ -166,6 +183,8 @@ public class BlockPhysicsEventHandler {
             java.util.Set<BlockPos> blockPositions = new java.util.HashSet<>();
             java.util.Map<BlockPos, RMaterial> materials = new java.util.HashMap<>();
             java.util.Set<BlockPos> anchors = new java.util.HashSet<>();
+            // ★ audit-fix C-4: 收集雕刻形狀的截面積
+            java.util.Map<BlockPos, Float> effectiveAreas = new java.util.HashMap<>();
 
             BlockPos start = center.offset(-radius, -radius, -radius);
             BlockPos end = center.offset(radius, radius, radius);
@@ -187,6 +206,11 @@ public class BlockPhysicsEventHandler {
                             if (rbe.isAnchored()) {
                                 anchors.add(pos);
                             }
+                            // ★ audit-fix C-4: 傳遞雕刻截面積到求解器
+                            com.blockreality.api.chisel.ChiselState cs = rbe.getChiselState();
+                            if (!cs.isFull()) {
+                                effectiveAreas.put(pos, (float) cs.crossSectionArea());
+                            }
                         } else {
                             // 原版方塊 → VanillaMaterialMap
                             String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
@@ -202,8 +226,9 @@ public class BlockPhysicsEventHandler {
 
             // 執行力平衡求解
             if (!blockPositions.isEmpty()) {
+                // ★ audit-fix C-4: 傳入截面積數據
                 java.util.Map<BlockPos, ForceEquilibriumSolver.ForceResult> results =
-                    ForceEquilibriumSolver.solve(blockPositions, materials, anchors);
+                    ForceEquilibriumSolver.solve(blockPositions, materials, anchors, effectiveAreas);
 
                 // 統計不穩定方塊並記錄 + 觸發 StressUpdateEvent
                 long unstableCount = 0;

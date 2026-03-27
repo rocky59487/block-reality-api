@@ -69,6 +69,25 @@ public class BRConfig {
     /** ★ v3fix: 啟用 ForceEquilibriumSolver 作為備選分析方法（預設關閉） */
     public final ForgeConfigSpec.BooleanValue useForceEquilibrium;
 
+    // ─── Phase 2: 並行物理引擎參數 ───
+
+    /** ★ Phase 2: 物理執行緒數（0 = 自動，使用 availableProcessors - 2） */
+    public final ForgeConfigSpec.IntValue physicsThreadCount;
+
+    /** ★ Phase 1: 快照最大方塊數上限（突破 40³ 限制） */
+    public final ForgeConfigSpec.IntValue maxSnapshotBlocks;
+
+    // ─── Phase 4: LOD 物理參數 ───
+
+    /** ★ Phase 4: 完整精度物理的最大距離（格） */
+    public final ForgeConfigSpec.IntValue lodFullPrecisionDistance;
+
+    /** ★ Phase 4: 標準精度物理的最大距離（格） */
+    public final ForgeConfigSpec.IntValue lodStandardDistance;
+
+    /** ★ Phase 4: 粗略精度物理的最大距離（格） */
+    public final ForgeConfigSpec.IntValue lodCoarseDistance;
+
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
         INSTANCE = new BRConfig(builder);
@@ -142,6 +161,28 @@ public class BRConfig {
         useForceEquilibrium = builder
             .comment("v3fix: Enable ForceEquilibriumSolver as alternative physics analysis (experimental, default false)")
             .define("use_force_equilibrium", false);
+
+        builder.pop().push("performance");
+
+        physicsThreadCount = builder
+            .comment("Phase 2: Physics thread count. 0 = auto (availableProcessors - 2). Range: 0-8.")
+            .defineInRange("physics_thread_count", 0, 0, 8);
+
+        maxSnapshotBlocks = builder
+            .comment("Phase 1: Maximum snapshot blocks. Raised from 65536 to support multi-chunk structures.")
+            .defineInRange("max_snapshot_blocks", 262144, 65536, 1048576);
+
+        lodFullPrecisionDistance = builder
+            .comment("Phase 4: Maximum distance (blocks) for full precision physics (BeamStress + ForceEquilibrium)")
+            .defineInRange("lod_full_precision_distance", 32, 8, 128);
+
+        lodStandardDistance = builder
+            .comment("Phase 4: Maximum distance (blocks) for standard precision physics (SupportPathAnalyzer)")
+            .defineInRange("lod_standard_distance", 96, 32, 256);
+
+        lodCoarseDistance = builder
+            .comment("Phase 4: Maximum distance (blocks) for coarse physics (LoadPathEngine only)")
+            .defineInRange("lod_coarse_distance", 256, 96, 512);
 
         builder.pop();
     }

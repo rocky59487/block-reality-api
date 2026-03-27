@@ -3,7 +3,9 @@ package com.blockreality.api.event;
 import com.blockreality.api.BlockRealityMod;
 import com.blockreality.api.collapse.CollapseManager;
 import com.blockreality.api.construction.ConstructionZoneManager;
+import com.blockreality.api.physics.PhysicsScheduler;
 import com.blockreality.api.physics.ResultApplicator;
+import com.blockreality.api.physics.StructureIslandRegistry;
 import com.blockreality.api.physics.UnionFindEngine;
 import com.blockreality.api.spi.ModuleRegistry;
 import net.minecraft.core.BlockPos;
@@ -79,6 +81,23 @@ public class ServerTickHandler {
             }
         }
 
+        // ★ audit-fix C-1: 消費 PhysicsScheduler 的 dirty queue，防止記憶體洩漏。
+        // getScheduledWork 原本未被呼叫，導致 dirtyIslandIds 只增不減。
+        // 目前僅 drain（標記已處理），未來可在此處觸發延遲物理重算。
+        if (PhysicsScheduler.hasPendingWork()) {
+            MinecraftServer srv3 = ServerLifecycleHooks.getCurrentServer();
+            if (srv3 != null) {
+                java.util.List<net.minecraft.server.level.ServerPlayer> players =
+                    srv3.getPlayerList().getPlayers();
+                long epoch = UnionFindEngine.getStructureEpoch();
+                java.util.List<PhysicsScheduler.ScheduledWork> work =
+                    PhysicsScheduler.getScheduledWork(players, epoch);
+                for (PhysicsScheduler.ScheduledWork sw : work) {
+                    PhysicsScheduler.markProcessed(sw.islandId());
+                }
+            }
+        }
+
         // ★ AD-7: 定期驅逐過期 UnionFind 快取條目，防止記憶體洩漏
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server != null && server.getTickCount() % CACHE_EVICTION_INTERVAL == 0) {
@@ -112,6 +131,14 @@ public class ServerTickHandler {
         // ★ R3-10 fix: 世界卸載時清理 ResultApplicator 失敗追蹤，
         // 防止殘留的 BlockPos 在其他世界的 retryFailed() 中被錯誤查詢。
         ResultApplicator.clearFailedPositions();
+        // ★ audit-fix M-5: Island Registry 和 Scheduler 是全域 static 結構，
+        // 不應在每個維度卸載時清除（否則 Nether 卸載會清掉 Overworld 的數據）。
+        // 僅在 Overworld 卸載（= 伺服器關閉）時清除。
+        if (event.getLevel() instanceof ServerLevel sl && sl.dimension() == net.minecraft.world.level.Level.OVERWORLD) {
+            StructureIslandRegistry.clear();
+            PhysicsScheduler.clear();
+            LOGGER.debug("[BR-Tick] Island registry & scheduler cleared on overworld unload (server shutdown)");
+        }
         LOGGER.debug("[BR-Tick] Collapse queue & failed positions cleared on world unload");
     }
 }
