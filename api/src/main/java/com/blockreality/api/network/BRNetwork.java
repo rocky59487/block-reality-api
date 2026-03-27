@@ -54,5 +54,14 @@ public class BRNetwork {
             ChiselSyncPacket::handle
         );
 
+        // ★ 雕刻刀控制封包 (C→S)：選區調整 + 橡皮擦模式
+        CHANNEL.registerMessage(
+            packetId.getAndIncrement(),
+            ChiselControlPacket.class,
+            ChiselControlPacket::encode,
+            ChiselControlPacket::decode,
+            ChiselControlPacket::handle
+        );
+
     }
 }

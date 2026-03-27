@@ -10,6 +10,7 @@ import com.blockreality.api.physics.PhysicsScheduler;
 import com.blockreality.api.physics.StructureIslandRegistry;
 import com.blockreality.api.physics.UnionFindEngine;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.Mth;
@@ -30,17 +31,27 @@ import org.jetbrains.annotations.NotNull;
  * 雕刻刀 — 將 RBlock 雕刻為子方塊形狀。
  *
  * 操作方式：
- *   - 右鍵方塊：套用當前模板形狀 / 在自訂模式下切換子體素
+ *   - 右鍵方塊（模板模式）：套用當前模板形狀
+ *   - 右鍵方塊（自訂模式）：以選區框 (selWidth × selHeight) 填充子體素
+ *   - X + 右鍵方塊（自訂模式）：移除單個子體素
+ *   - 上下鍵：調整選區高度 (1~10)
+ *   - 左右鍵：調整選區寬度 (1~10)
  *   - Shift+右鍵空中：循環切換模板形狀
  *
- * 模式儲存在 ItemStack NBT 的 "chisel_mode" 標籤中。
+ * 選區大小與模式儲存在 ItemStack NBT 中。
  */
 public class ChiselItem extends Item {
 
-    private static final String TAG_MODE = "chisel_mode";
     private static final String TAG_SHAPE_INDEX = "chisel_shape_idx";
+    private static final String TAG_SEL_WIDTH = "chisel_sel_w";
+    private static final String TAG_SEL_HEIGHT = "chisel_sel_h";
+    private static final String TAG_ERASE = "chisel_erase";
 
-    /** 可循環的模板形狀（不含 CUSTOM，CUSTOM 需要額外操作進入） */
+    /** 選區邊長範圍 */
+    private static final int MIN_SEL = 1;
+    private static final int MAX_SEL = 10;
+
+    /** 可循環的模板形狀 */
     private static final SubBlockShape[] TEMPLATE_CYCLE = {
         SubBlockShape.FULL,
         SubBlockShape.SLAB_BOTTOM,
@@ -65,7 +76,9 @@ public class ChiselItem extends Item {
         super(new Item.Properties().stacksTo(1));
     }
 
-    // ─── 右鍵方塊：套用形狀 ───
+    // ═══════════════════════════════════════════════════
+    //  右鍵方塊：套用形狀 / 選區填充 / 橡皮擦
+    // ═══════════════════════════════════════════════════
 
     @Override
     @NotNull
@@ -83,50 +96,145 @@ public class ChiselItem extends Item {
         SubBlockShape currentShape = getCurrentShape(stack);
 
         if (currentShape == SubBlockShape.CUSTOM) {
-            // 自訂模式：切換 hit 位置的子體素
-            Vec3 hit = context.getClickLocation();
-            int vx = Mth.clamp((int) ((hit.x - pos.getX()) * 10), 0, 9);
-            int vy = Mth.clamp((int) ((hit.y - pos.getY()) * 10), 0, 9);
-            int vz = Mth.clamp((int) ((hit.z - pos.getZ()) * 10), 0, 9);
-
-            ChiselState oldState = rbe.getChiselState();
-            VoxelGrid oldGrid = oldState.isCustom() ? oldState.voxelGrid() : VoxelGrid.full();
-            boolean wasSet = oldGrid.get(vx, vy, vz);
-
-            VoxelGrid newGrid = new VoxelGrid.Builder(oldGrid)
-                .set(vx, vy, vz, !wasSet)
-                .build();
-
-            if (newGrid.isEmpty()) {
-                return InteractionResult.FAIL; // 不允許完全移除
-            }
-
-            ChiselState newState = ChiselState.ofCustom(newGrid);
-            rbe.setChiselState(newState);
+            return handleCustomMode(context, rbe, stack);
         } else {
             // 模板模式：直接套用
             ChiselState newState = ChiselState.ofShape(currentShape);
             rbe.setChiselState(newState);
         }
 
-        // 同步到附近玩家
+        syncAndMarkDirty(level, pos, rbe);
+        return InteractionResult.CONSUME;
+    }
+
+    /**
+     * 自訂模式處理：
+     *   - 橡皮擦模式 (X 按住)：移除 hit 位置的單個子體素
+     *   - 正常模式：以選區框填充子體素
+     */
+    private InteractionResult handleCustomMode(UseOnContext context, RBlockEntity rbe, ItemStack stack) {
+        Level level = context.getLevel();
+        BlockPos pos = context.getClickedPos();
+        Vec3 hit = context.getClickLocation();
+        Direction face = context.getClickedFace();
+
+        // 計算 hit 位置對應的子體素座標
+        int hitVx = Mth.clamp((int) ((hit.x - pos.getX()) * 10), 0, 9);
+        int hitVy = Mth.clamp((int) ((hit.y - pos.getY()) * 10), 0, 9);
+        int hitVz = Mth.clamp((int) ((hit.z - pos.getZ()) * 10), 0, 9);
+
+        ChiselState oldState = rbe.getChiselState();
+        VoxelGrid oldGrid = oldState.isCustom() ? oldState.voxelGrid() : VoxelGrid.full();
+
+        if (isEraseMode(stack)) {
+            // ★ 橡皮擦模式：X + 右鍵 → 移除單個子體素
+            if (!oldGrid.get(hitVx, hitVy, hitVz)) {
+                return InteractionResult.PASS; // 已經是空的
+            }
+            VoxelGrid newGrid = new VoxelGrid.Builder(oldGrid)
+                .set(hitVx, hitVy, hitVz, false)
+                .build();
+            if (newGrid.isEmpty()) {
+                return InteractionResult.FAIL; // 不允許完全移除
+            }
+            rbe.setChiselState(ChiselState.ofCustom(newGrid));
+        } else {
+            // ★ 選區填充模式：以 selWidth × selHeight 框在 hit 位置填充
+            int selW = getSelectionWidth(stack);
+            int selH = getSelectionHeight(stack);
+
+            VoxelGrid.Builder builder = new VoxelGrid.Builder(oldGrid);
+            applySelectionBox(builder, hitVx, hitVy, hitVz, face, selW, selH, true);
+            VoxelGrid newGrid = builder.build();
+            rbe.setChiselState(ChiselState.ofCustom(newGrid));
+        }
+
+        syncAndMarkDirty(level, pos, rbe);
+        return InteractionResult.CONSUME;
+    }
+
+    /**
+     * 在子體素網格上套用選區框操作。
+     *
+     * 選區框以 hit 體素為起點，沿著點擊面的兩個平面軸展開。
+     * 面法線方向不展開（深度固定 1 層）。
+     *
+     * @param builder   VoxelGrid 建造器
+     * @param hitX      hit 體素 X
+     * @param hitY      hit 體素 Y
+     * @param hitZ      hit 體素 Z
+     * @param face      點擊的面方向（決定展開軸）
+     * @param selWidth  選區寬度（左右鍵調整）
+     * @param selHeight 選區高度（上下鍵調整）
+     * @param value     true = 填充, false = 清除
+     */
+    private static void applySelectionBox(VoxelGrid.Builder builder,
+                                           int hitX, int hitY, int hitZ,
+                                           Direction face,
+                                           int selWidth, int selHeight,
+                                           boolean value) {
+        // 根據面方向決定展開軸
+        // 寬度 (selWidth) → 水平方向, 高度 (selHeight) → 垂直方向
+        // 面法線方向固定不展開
+        int halfW = (selWidth - 1) / 2;
+        int halfH = (selHeight - 1) / 2;
+
+        switch (face.getAxis()) {
+            case Y -> {
+                // 點擊頂/底面：選區在 XZ 平面展開
+                // 寬度 → X 軸, 高度 → Z 軸
+                for (int dx = -halfW; dx <= halfW + (selWidth - 1) % 2; dx++) {
+                    for (int dz = -halfH; dz <= halfH + (selHeight - 1) % 2; dz++) {
+                        int vx = Mth.clamp(hitX + dx, 0, 9);
+                        int vz = Mth.clamp(hitZ + dz, 0, 9);
+                        builder.set(vx, hitY, vz, value);
+                    }
+                }
+            }
+            case X -> {
+                // 點擊東/西面：選區在 ZY 平面展開
+                // 寬度 → Z 軸, 高度 → Y 軸
+                for (int dz = -halfW; dz <= halfW + (selWidth - 1) % 2; dz++) {
+                    for (int dy = -halfH; dy <= halfH + (selHeight - 1) % 2; dy++) {
+                        int vz = Mth.clamp(hitZ + dz, 0, 9);
+                        int vy = Mth.clamp(hitY + dy, 0, 9);
+                        builder.set(hitX, vy, vz, value);
+                    }
+                }
+            }
+            case Z -> {
+                // 點擊南/北面：選區在 XY 平面展開
+                // 寬度 → X 軸, 高度 → Y 軸
+                for (int dx = -halfW; dx <= halfW + (selWidth - 1) % 2; dx++) {
+                    for (int dy = -halfH; dy <= halfH + (selHeight - 1) % 2; dy++) {
+                        int vx = Mth.clamp(hitX + dx, 0, 9);
+                        int vy = Mth.clamp(hitY + dy, 0, 9);
+                        builder.set(vx, vy, hitZ, value);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 同步雕刻狀態到附近玩家並觸發物理重算。
+     */
+    private void syncAndMarkDirty(Level level, BlockPos pos, RBlockEntity rbe) {
         BRNetwork.CHANNEL.send(
-            PacketDistributor.TRACKING_CHUNK.with(() ->
-                level.getChunkAt(pos)),
+            PacketDistributor.TRACKING_CHUNK.with(() -> level.getChunkAt(pos)),
             new ChiselSyncPacket(pos, rbe.getChiselState())
         );
 
-        // 觸發物理重新計算
         long epoch = UnionFindEngine.getStructureEpoch();
         int islandId = StructureIslandRegistry.getIslandId(pos);
         if (islandId >= 0) {
             PhysicsScheduler.markDirty(islandId, epoch);
         }
-
-        return InteractionResult.CONSUME;
     }
 
-    // ─── Shift+右鍵空中：循環切換形狀 ───
+    // ═══════════════════════════════════════════════════
+    //  Shift+右鍵空中：循環切換形狀
+    // ═══════════════════════════════════════════════════
 
     @Override
     @NotNull
@@ -145,16 +253,21 @@ public class ChiselItem extends Item {
         SubBlockShape nextShape = TEMPLATE_CYCLE[nextIdx];
 
         if (!level.isClientSide) {
+            String extra = nextShape == SubBlockShape.CUSTOM
+                ? " §7(選區: " + getSelectionWidth(stack) + "×" + getSelectionHeight(stack) + ")"
+                : "";
             player.displayClientMessage(
-                Component.literal("§b[雕刻刀] §f形狀: " + nextShape.getSerializedName()),
-                true // actionbar
+                Component.literal("§b[雕刻刀] §f形狀: " + nextShape.getSerializedName() + extra),
+                true
             );
         }
 
         return InteractionResultHolder.success(stack);
     }
 
-    // ─── NBT 輔助 ───
+    // ═══════════════════════════════════════════════════
+    //  NBT 輔助 — 形狀索引
+    // ═══════════════════════════════════════════════════
 
     private SubBlockShape getCurrentShape(ItemStack stack) {
         int idx = getShapeIndex(stack);
@@ -170,5 +283,48 @@ public class ChiselItem extends Item {
 
     private void setShapeIndex(ItemStack stack, int idx) {
         stack.getOrCreateTag().putInt(TAG_SHAPE_INDEX, idx);
+    }
+
+    // ═══════════════════════════════════════════════════
+    //  Static NBT API — 供 ChiselControlPacket 呼叫
+    // ═══════════════════════════════════════════════════
+
+    /** 取得選區寬度 (預設 1) */
+    public static int getSelectionWidth(ItemStack stack) {
+        CompoundTag tag = stack.getTag();
+        if (tag == null || !tag.contains(TAG_SEL_WIDTH)) return 1;
+        return Mth.clamp(tag.getInt(TAG_SEL_WIDTH), MIN_SEL, MAX_SEL);
+    }
+
+    /** 取得選區高度 (預設 1) */
+    public static int getSelectionHeight(ItemStack stack) {
+        CompoundTag tag = stack.getTag();
+        if (tag == null || !tag.contains(TAG_SEL_HEIGHT)) return 1;
+        return Mth.clamp(tag.getInt(TAG_SEL_HEIGHT), MIN_SEL, MAX_SEL);
+    }
+
+    /** 調整選區寬度 (±delta, clamped to 1~10) */
+    public static void adjustSelectionWidth(ItemStack stack, int delta) {
+        int current = getSelectionWidth(stack);
+        int next = Mth.clamp(current + delta, MIN_SEL, MAX_SEL);
+        stack.getOrCreateTag().putInt(TAG_SEL_WIDTH, next);
+    }
+
+    /** 調整選區高度 (±delta, clamped to 1~10) */
+    public static void adjustSelectionHeight(ItemStack stack, int delta) {
+        int current = getSelectionHeight(stack);
+        int next = Mth.clamp(current + delta, MIN_SEL, MAX_SEL);
+        stack.getOrCreateTag().putInt(TAG_SEL_HEIGHT, next);
+    }
+
+    /** 是否為橡皮擦模式 (X 按住) */
+    public static boolean isEraseMode(ItemStack stack) {
+        CompoundTag tag = stack.getTag();
+        return tag != null && tag.getBoolean(TAG_ERASE);
+    }
+
+    /** 設定橡皮擦模式 */
+    public static void setEraseMode(ItemStack stack, boolean erase) {
+        stack.getOrCreateTag().putBoolean(TAG_ERASE, erase);
     }
 }

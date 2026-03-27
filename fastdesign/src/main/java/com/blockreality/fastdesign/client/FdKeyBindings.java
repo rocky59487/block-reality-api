@@ -1,6 +1,9 @@
 package com.blockreality.fastdesign.client;
 
 import com.blockreality.api.client.GhostBlockRenderer;
+import com.blockreality.api.item.ChiselItem;
+import com.blockreality.api.network.BRNetwork;
+import com.blockreality.api.network.ChiselControlPacket;
 import com.blockreality.api.placement.BuildMode;
 import com.blockreality.api.placement.MultiBlockCalculator;
 import com.blockreality.fastdesign.FastDesignMod;
@@ -42,6 +45,38 @@ public class FdKeyBindings {
         "key.categories.fastdesign"
     );
 
+    // ★ 雕刻刀選區控制鍵
+    public static final KeyMapping CHISEL_HEIGHT_UP = new KeyMapping(
+        "key.fastdesign.chisel_height_up",
+        InputConstants.KEY_UP,
+        "key.categories.fastdesign"
+    );
+
+    public static final KeyMapping CHISEL_HEIGHT_DOWN = new KeyMapping(
+        "key.fastdesign.chisel_height_down",
+        InputConstants.KEY_DOWN,
+        "key.categories.fastdesign"
+    );
+
+    public static final KeyMapping CHISEL_WIDTH_RIGHT = new KeyMapping(
+        "key.fastdesign.chisel_width_right",
+        InputConstants.KEY_RIGHT,
+        "key.categories.fastdesign"
+    );
+
+    public static final KeyMapping CHISEL_WIDTH_LEFT = new KeyMapping(
+        "key.fastdesign.chisel_width_left",
+        InputConstants.KEY_LEFT,
+        "key.categories.fastdesign"
+    );
+
+    /** X 鍵：按住啟用橡皮擦模式（取消選取單個方塊） */
+    public static final KeyMapping CHISEL_ERASE = new KeyMapping(
+        "key.fastdesign.chisel_erase",
+        InputConstants.KEY_X,
+        "key.categories.fastdesign"
+    );
+
     /**
      * MOD 事件匯流排 — 註冊快捷鍵
      */
@@ -52,6 +87,12 @@ public class FdKeyBindings {
         public static void onRegisterKeys(RegisterKeyMappingsEvent event) {
             event.register(OPEN_PANEL);
             event.register(CYCLE_BUILD_MODE);
+            // ★ 雕刻刀控制鍵
+            event.register(CHISEL_HEIGHT_UP);
+            event.register(CHISEL_HEIGHT_DOWN);
+            event.register(CHISEL_WIDTH_RIGHT);
+            event.register(CHISEL_WIDTH_LEFT);
+            event.register(CHISEL_ERASE);
         }
     }
 
@@ -98,8 +139,67 @@ public class FdKeyBindings {
                 }
             }
 
+            // ─── 雕刻刀控制鍵 ───
+            handleChiselKeys(mc);
+
             // ─── 每 tick 更新幽靈方塊預覽 ───
             updateGhostPreview(mc);
+        }
+
+        /** X 鍵上一 tick 狀態 — 用於偵測按下/放開邊緣 */
+        private static boolean wasEraseKeyDown = false;
+
+        /**
+         * 處理雕刻刀專用快捷鍵。
+         * 只在玩家手持雕刻刀時生效。
+         */
+        private static void handleChiselKeys(Minecraft mc) {
+            if (mc.player == null || mc.screen != null) return;
+
+            // 只在手持雕刻刀時響應
+            boolean holdingChisel =
+                mc.player.getMainHandItem().getItem() instanceof ChiselItem ||
+                mc.player.getOffhandItem().getItem() instanceof ChiselItem;
+            if (!holdingChisel) {
+                // 若切換離開雕刻刀，確保橡皮擦模式關閉
+                if (wasEraseKeyDown) {
+                    wasEraseKeyDown = false;
+                    BRNetwork.CHANNEL.sendToServer(
+                        new ChiselControlPacket(ChiselControlPacket.Action.ERASE_OFF));
+                }
+                return;
+            }
+
+            // 上下鍵：調高度
+            while (CHISEL_HEIGHT_UP.consumeClick()) {
+                BRNetwork.CHANNEL.sendToServer(
+                    new ChiselControlPacket(ChiselControlPacket.Action.SEL_HEIGHT_INC));
+            }
+            while (CHISEL_HEIGHT_DOWN.consumeClick()) {
+                BRNetwork.CHANNEL.sendToServer(
+                    new ChiselControlPacket(ChiselControlPacket.Action.SEL_HEIGHT_DEC));
+            }
+
+            // 左右鍵：調寬度
+            while (CHISEL_WIDTH_RIGHT.consumeClick()) {
+                BRNetwork.CHANNEL.sendToServer(
+                    new ChiselControlPacket(ChiselControlPacket.Action.SEL_WIDTH_INC));
+            }
+            while (CHISEL_WIDTH_LEFT.consumeClick()) {
+                BRNetwork.CHANNEL.sendToServer(
+                    new ChiselControlPacket(ChiselControlPacket.Action.SEL_WIDTH_DEC));
+            }
+
+            // X 鍵：按住 = 橡皮擦模式（偵測邊緣觸發，避免每 tick 發封包）
+            boolean isEraseDown = CHISEL_ERASE.isDown();
+            if (isEraseDown && !wasEraseKeyDown) {
+                BRNetwork.CHANNEL.sendToServer(
+                    new ChiselControlPacket(ChiselControlPacket.Action.ERASE_ON));
+            } else if (!isEraseDown && wasEraseKeyDown) {
+                BRNetwork.CHANNEL.sendToServer(
+                    new ChiselControlPacket(ChiselControlPacket.Action.ERASE_OFF));
+            }
+            wasEraseKeyDown = isEraseDown;
         }
 
         /**
