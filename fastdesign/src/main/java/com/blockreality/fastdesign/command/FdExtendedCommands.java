@@ -1,5 +1,6 @@
 package com.blockreality.fastdesign.command;
 
+import com.blockreality.fastdesign.command.DeltaUndoManager;
 import com.blockreality.api.block.RBlockEntity;
 import com.blockreality.api.blueprint.Blueprint;
 import com.blockreality.api.blueprint.BlueprintIO;
@@ -118,9 +119,9 @@ public class FdExtendedCommands {
             for (Blueprint.BlueprintBlock b : bp.getBlocks()) {
                 affectedPositions.add(origin.offset(b.getRelX(), b.getRelY(), b.getRelZ()));
             }
-            UndoManager.pushSnapshotForPositions(uuid, level, affectedPositions, "paste");
-
+            var beforeMap = DeltaUndoManager.captureBeforeState(level, affectedPositions);
             int placed = BlueprintIO.paste(level, bp, origin);
+            DeltaUndoManager.commitChanges(uuid, level, beforeMap, "paste");
 
             src.sendSuccess(() -> Component.literal(String.format(
                     "§6[FD] §fPasted §a%d §fblocks at (%d,%d,%d)",
@@ -234,14 +235,16 @@ public class FdExtendedCommands {
 
         try {
             ServerLevel level = (ServerLevel) player.level();
-            UndoManager.pushSnapshot(uuid, level, box, "fill " + blockName);
+            List<BlockPos> positions = new ArrayList<>();
+            for (BlockPos pos : box.allPositions()) { positions.add(pos.immutable()); }
+            var beforeMap = DeltaUndoManager.captureBeforeState(level, positions);
 
             int placed = 0;
-            for (BlockPos pos : box.allPositions()) {
-                BlockPos immutable = pos.immutable();
-                level.setBlock(immutable, blockState, 3);
+            for (BlockPos pos : positions) {
+                level.setBlock(pos, blockState, 3);
                 placed++;
             }
+            DeltaUndoManager.commitChanges(uuid, level, beforeMap, "fill " + blockName);
 
             final int count = placed;
             src.sendSuccess(() -> Component.literal(String.format(
@@ -289,17 +292,19 @@ public class FdExtendedCommands {
 
         try {
             ServerLevel level = (ServerLevel) player.level();
-            UndoManager.pushSnapshot(uuid, level, box, "replace " + fromName + "->" + toName);
+            List<BlockPos> positions = new ArrayList<>();
+            for (BlockPos pos : box.allPositions()) { positions.add(pos.immutable()); }
+            var beforeMap = DeltaUndoManager.captureBeforeState(level, positions);
 
             int replaced = 0;
-            for (BlockPos pos : box.allPositions()) {
-                BlockPos immutable = pos.immutable();
-                BlockState current = level.getBlockState(immutable);
+            for (BlockPos pos : positions) {
+                BlockState current = level.getBlockState(pos);
                 if (current.getBlock() == fromState.getBlock()) {
-                    level.setBlock(immutable, toState, 3);
+                    level.setBlock(pos, toState, 3);
                     replaced++;
                 }
             }
+            DeltaUndoManager.commitChanges(uuid, level, beforeMap, "replace " + fromName + "->" + toName);
 
             final int count = replaced;
             src.sendSuccess(() -> Component.literal(String.format(
@@ -334,14 +339,16 @@ public class FdExtendedCommands {
 
         try {
             ServerLevel level = (ServerLevel) player.level();
-            UndoManager.pushSnapshot(uuid, level, box, "clear");
+            List<BlockPos> positions = new ArrayList<>();
+            for (BlockPos pos : box.allPositions()) { positions.add(pos.immutable()); }
+            var beforeMap = DeltaUndoManager.captureBeforeState(level, positions);
 
             int cleared = 0;
-            for (BlockPos pos : box.allPositions()) {
-                BlockPos immutable = pos.immutable();
-                level.setBlock(immutable, Blocks.AIR.defaultBlockState(), 3);
+            for (BlockPos pos : positions) {
+                level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
                 cleared++;
             }
+            DeltaUndoManager.commitChanges(uuid, level, beforeMap, "clear");
 
             final int count = cleared;
             src.sendSuccess(() -> Component.literal(String.format(
@@ -384,7 +391,9 @@ public class FdExtendedCommands {
 
         try {
             ServerLevel level = (ServerLevel) player.level();
-            UndoManager.pushSnapshot(uuid, level, box, "walls " + materialName);
+            List<BlockPos> allPos = new ArrayList<>();
+            for (BlockPos p : box.allPositions()) { allPos.add(p.immutable()); }
+            var beforeMap = DeltaUndoManager.captureBeforeState(level, allPos);
 
             int placed = 0;
             int minX = box.min().getX(), maxX = box.max().getX();
@@ -425,6 +434,7 @@ public class FdExtendedCommands {
                 }
             }
 
+            DeltaUndoManager.commitChanges(uuid, level, beforeMap, "walls " + materialName);
             final int count = placed;
             src.sendSuccess(() -> Component.literal(String.format(
                     "§6[FD] §fBuilt walls: §a%d §fblocks with §e%s", count, materialName
@@ -476,9 +486,10 @@ public class FdExtendedCommands {
             src.sendSuccess(() -> Component.literal("§6[FD] §fClipboard: §7empty"), false);
         }
 
-        int undoDepth = UndoManager.getStackSize(uuid);
+        int undoDepth = DeltaUndoManager.getUndoStackSize(uuid);
+        int redoDepth = DeltaUndoManager.getRedoStackSize(uuid);
         src.sendSuccess(() -> Component.literal(String.format(
-                "§6[FD] §fUndo stack: §a%d§f operations", undoDepth
+                "§6[FD] §fUndo stack: §a%d§f operations | Redo stack: §a%d§f operations", undoDepth, redoDepth
         )), false);
 
         return 1;
@@ -588,9 +599,10 @@ public class FdExtendedCommands {
         for (Blueprint.BlueprintBlock b : bp.getBlocks()) {
             affectedPositions.add(origin.offset(b.getRelX(), b.getRelY(), b.getRelZ()));
         }
-        UndoManager.pushSnapshotForPositions(uuid, level, affectedPositions, "paste");
-
-        return BlueprintIO.paste(level, bp, origin);
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, affectedPositions);
+        int result = BlueprintIO.paste(level, bp, origin);
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "paste");
+        return result;
     }
 
     /**
@@ -609,13 +621,16 @@ public class FdExtendedCommands {
             throw new IllegalStateException("Selection too large! Max " + FastDesignConfig.getMaxSelectionVolume() + " blocks");
         }
 
-        UndoManager.pushSnapshot(uuid, level, box, "clear");
+        List<BlockPos> positions = new ArrayList<>();
+        for (BlockPos pos : box.allPositions()) { positions.add(pos.immutable()); }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, positions);
 
         int cleared = 0;
-        for (BlockPos pos : box.allPositions()) {
-            level.setBlock(pos.immutable(), Blocks.AIR.defaultBlockState(), 3);
+        for (BlockPos pos : positions) {
+            level.setBlock(pos, Blocks.AIR.defaultBlockState(), 3);
             cleared++;
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "clear");
         return cleared;
     }
 
@@ -692,12 +707,16 @@ public class FdExtendedCommands {
         if (blockState == null) {
             throw new IllegalArgumentException("未知方塊: " + blockName);
         }
-        UndoManager.pushSnapshot(uuid, level, box, "fill " + blockName);
+        List<BlockPos> positions = new ArrayList<>();
+        for (BlockPos pos : box.allPositions()) { positions.add(pos.immutable()); }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, positions);
+
         int placed = 0;
-        for (BlockPos pos : box.allPositions()) {
-            level.setBlock(pos.immutable(), blockState, 3);
+        for (BlockPos pos : positions) {
+            level.setBlock(pos, blockState, 3);
             placed++;
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "fill " + blockName);
         return placed;
     }
 
@@ -721,16 +740,19 @@ public class FdExtendedCommands {
         BlockState toState = parseBlockState(toName);
         if (fromState == null) throw new IllegalArgumentException("未知方塊: " + fromName);
         if (toState == null) throw new IllegalArgumentException("未知方塊: " + toName);
-        UndoManager.pushSnapshot(uuid, level, box, "replace " + fromName + "->" + toName);
+        List<BlockPos> positions = new ArrayList<>();
+        for (BlockPos pos : box.allPositions()) { positions.add(pos.immutable()); }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, positions);
+
         int replaced = 0;
-        for (BlockPos pos : box.allPositions()) {
-            BlockPos immutable = pos.immutable();
-            BlockState current = level.getBlockState(immutable);
+        for (BlockPos pos : positions) {
+            BlockState current = level.getBlockState(pos);
             if (current.getBlock() == fromState.getBlock()) {
-                level.setBlock(immutable, toState, 3);
+                level.setBlock(pos, toState, 3);
                 replaced++;
             }
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "replace " + fromName + "->" + toName);
         return replaced;
     }
 
@@ -752,7 +774,11 @@ public class FdExtendedCommands {
             throw new IllegalArgumentException("未知材質: " + materialName);
         }
         BlockState blockState = getBlockStateForMaterial(material);
-        UndoManager.pushSnapshot(uuid, level, box, "walls " + materialName);
+        List<BlockPos> undoPositions = new ArrayList<>();
+        for (BlockPos p : box.allPositions()) {
+            undoPositions.add(p.immutable());
+        }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, undoPositions);
 
         int placed = 0;
         int minX = box.min().getX(), maxX = box.max().getX();
@@ -783,6 +809,7 @@ public class FdExtendedCommands {
                 placed++;
             }
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "walls " + materialName);
         return placed;
     }
 
@@ -807,7 +834,11 @@ public class FdExtendedCommands {
             throw new IllegalArgumentException("未知材質: " + materialName);
         }
         BlockState blockState = getBlockStateForMaterial(material);
-        UndoManager.pushSnapshot(uuid, level, box, "solid " + materialName);
+        List<BlockPos> undoPositions = new ArrayList<>();
+        for (BlockPos p : box.allPositions()) {
+            undoPositions.add(p.immutable());
+        }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, undoPositions);
 
         int placed = 0;
         for (BlockPos pos : box.allPositions()) {
@@ -816,6 +847,7 @@ public class FdExtendedCommands {
             setRBlockMaterial(level, immutable, material);
             placed++;
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "solid " + materialName);
         return placed;
     }
 
@@ -837,7 +869,11 @@ public class FdExtendedCommands {
             throw new IllegalArgumentException("未知材質: " + materialName);
         }
         BlockState blockState = getBlockStateForMaterial(material);
-        UndoManager.pushSnapshot(uuid, level, box, "slab " + materialName);
+        List<BlockPos> undoPositions = new ArrayList<>();
+        for (BlockPos p : box.allPositions()) {
+            undoPositions.add(p.immutable());
+        }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, undoPositions);
 
         int placed = 0;
         int y = box.min().getY();
@@ -849,6 +885,7 @@ public class FdExtendedCommands {
                 placed++;
             }
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "slab " + materialName);
         return placed;
     }
 
@@ -870,7 +907,11 @@ public class FdExtendedCommands {
             throw new IllegalArgumentException("未知材質: " + materialName);
         }
         BlockState blockState = getBlockStateForMaterial(material);
-        UndoManager.pushSnapshot(uuid, level, box, "arch " + materialName);
+        List<BlockPos> undoPositions = new ArrayList<>();
+        for (BlockPos p : box.allPositions()) {
+            undoPositions.add(p.immutable());
+        }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, undoPositions);
 
         int placed = 0;
         int minX = box.min().getX(), maxX = box.max().getX();
@@ -911,6 +952,7 @@ public class FdExtendedCommands {
                 }
             }
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "arch " + materialName);
         return placed;
     }
 
@@ -932,7 +974,11 @@ public class FdExtendedCommands {
             throw new IllegalArgumentException("未知材質: " + materialName);
         }
         BlockState blockState = getBlockStateForMaterial(material);
-        UndoManager.pushSnapshot(uuid, level, box, "brace " + materialName);
+        List<BlockPos> undoPositions = new ArrayList<>();
+        for (BlockPos p : box.allPositions()) {
+            undoPositions.add(p.immutable());
+        }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, undoPositions);
 
         int placed = 0;
         int minX = box.min().getX(), maxX = box.max().getX();
@@ -972,6 +1018,7 @@ public class FdExtendedCommands {
                 }
             }
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "brace " + materialName);
         return placed;
     }
 
@@ -987,7 +1034,11 @@ public class FdExtendedCommands {
         }
         var box = PlayerSelectionManager.getSelection(uuid);
         BlockState rebarState = BRBlocks.R_REBAR.get().defaultBlockState();
-        UndoManager.pushSnapshot(uuid, level, box, "rebar-grid " + spacing);
+        List<BlockPos> undoPositions = new ArrayList<>();
+        for (BlockPos p : box.allPositions()) {
+            undoPositions.add(p.immutable());
+        }
+        var beforeMap = DeltaUndoManager.captureBeforeState(level, undoPositions);
 
         int placed = 0;
         int minX = box.min().getX(), minY = box.min().getY(), minZ = box.min().getZ();
@@ -1010,6 +1061,7 @@ public class FdExtendedCommands {
                 }
             }
         }
+        DeltaUndoManager.commitChanges(uuid, level, beforeMap, "rebar-grid " + spacing);
         return placed;
     }
 }

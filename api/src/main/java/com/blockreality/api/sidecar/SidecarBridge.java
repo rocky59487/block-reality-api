@@ -357,8 +357,25 @@ public class SidecarBridge {
     }
 
     /**
-     * 便利多載：使用系統 PATH 中的 node，sidecar.js 在 mod config 目錄旁
+     * 異步啟動 Sidecar — 會自動處理 Node.js 下載與 sidecar.js 解壓縮。
+     * （不會阻塞伺服器主執行緒）
      */
+    public CompletableFuture<Void> startAsync() {
+        return NodeInstaller.ensureNodeJsAsync().thenAcceptAsync(nodePath -> {
+            try {
+                Path script = NodeInstaller.ensureSidecarScriptExists();
+                start(nodePath, script);
+            } catch (Exception e) {
+                LOGGER.error("自動啟動 Sidecar 失敗", e);
+                throw new RuntimeException(e);
+            }
+        });
+    }
+
+    /**
+     * @deprecated 改用 startAsync() 以獲得全自動的依賴管理與安裝體驗。
+     */
+    @Deprecated
     public void start() throws IOException {
         Path defaultScript = FMLPaths.GAMEDIR.get()
                 .resolve("blockreality")

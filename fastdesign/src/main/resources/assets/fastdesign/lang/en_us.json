@@ -2,5 +2,11 @@
   "item.fastdesign.fd_wand": "FD Selection Wand",
   "itemGroup.fastdesign.fd_tab": "Fast Design",
   "key.fastdesign.open_panel": "Open Control Panel",
+  "key.fastdesign.cycle_build_mode": "Cycle Build Mode",
+  "key.fastdesign.pie_menu": "Pie Menu",
+  "key.fastdesign.deselect": "Deselect",
+  "key.fastdesign.shift_up": "Selection Up",
+  "key.fastdesign.shift_down": "Selection Down",
+  "key.fastdesign.move_selection": "Resize Selection (Hold + Drag Face)",
   "key.categories.fastdesign": "Fast Design"
 }

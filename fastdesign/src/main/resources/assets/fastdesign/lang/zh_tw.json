@@ -2,5 +2,11 @@
   "item.fastdesign.fd_wand": "FD 選取游標",
   "itemGroup.fastdesign.fd_tab": "Fast Design",
   "key.fastdesign.open_panel": "開啟控制面板",
+  "key.fastdesign.cycle_build_mode": "切換建造模式",
+  "key.fastdesign.pie_menu": "快捷輪盤",
+  "key.fastdesign.deselect": "取消選取",
+  "key.fastdesign.shift_up": "選取區域上移",
+  "key.fastdesign.shift_down": "選取區域下移",
+  "key.fastdesign.move_selection": "調整選取大小（按住+拖動邊界）",
   "key.categories.fastdesign": "Fast Design"
 }

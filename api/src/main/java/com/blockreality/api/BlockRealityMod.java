@@ -123,9 +123,9 @@ public class BlockRealityMod {
     public void onServerStarting(ServerStartingEvent event) {
         // 啟動 Sidecar IPC
         try {
-            SidecarBridge.getInstance().start();
-            LOGGER.info("[BlockReality] Sidecar 已啟動");
-        } catch (java.io.IOException e) {
+            SidecarBridge.getInstance().startAsync();
+            LOGGER.info("[BlockReality] Sidecar 已觸發非同步啟動流程");
+        } catch (Exception e) {
             LOGGER.error("[BlockReality] Sidecar 啟動失敗，CAD 功能將不可用", e);
         }
 

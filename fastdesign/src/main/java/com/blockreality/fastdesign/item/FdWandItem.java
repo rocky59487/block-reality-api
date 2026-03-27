@@ -51,13 +51,8 @@ public class FdWandItem extends Item {
         Level level = context.getLevel();
         BlockPos pos = context.getClickedPos();
 
-        // ─── 客戶端: 多方塊模式處理 ───
-        // WandClientHandler 是 @OnlyIn(CLIENT) 類別，透過 DistExecutor 確保伺服器不載入
+        // Wand is exclusively for selection (Pos1/Pos2).
         if (level.isClientSide) {
-            net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
-                net.minecraftforge.api.distmarker.Dist.CLIENT,
-                () -> () -> com.blockreality.fastdesign.client.WandClientHandler.handleMultiBlock(player, pos)
-            );
             return InteractionResult.SUCCESS;
         }
 
@@ -104,10 +99,11 @@ public class FdWandItem extends Item {
 
         if (player.isShiftKeyDown()) {
             if (level.isClientSide) {
+                // v2.0: Shift+右鍵 開啟 Pie Menu 快捷輪盤
                 net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
                     net.minecraftforge.api.distmarker.Dist.CLIENT,
                     () -> () -> net.minecraft.client.Minecraft.getInstance().setScreen(
-                        new com.blockreality.fastdesign.client.ControlPanelScreen()));
+                        new com.blockreality.fastdesign.client.PieMenuScreen()));
             }
             return InteractionResultHolder.consume(stack);
         }
@@ -130,11 +126,13 @@ public class FdWandItem extends Item {
     public void appendHoverText(ItemStack stack, @Nullable Level level,
                                  List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.literal("左鍵: 設定選取點 A").withStyle(ChatFormatting.GREEN));
-        tooltip.add(Component.literal("右鍵: 設定選取點 B / 多方塊放置").withStyle(ChatFormatting.AQUA));
-        tooltip.add(Component.literal("Shift+右鍵: 開啟控制面板").withStyle(ChatFormatting.YELLOW));
+        tooltip.add(Component.literal("右鍵: 設定選取點 B").withStyle(ChatFormatting.AQUA));
+        tooltip.add(Component.literal("Shift+右鍵: 開啟快捷輪盤").withStyle(ChatFormatting.YELLOW));
+        tooltip.add(Component.literal("中鍵: 材質拾色器").withStyle(ChatFormatting.GOLD));
         tooltip.add(Component.literal("V 鍵: 切換建造模式").withStyle(ChatFormatting.LIGHT_PURPLE));
+        tooltip.add(Component.literal("Alt: 快捷輪盤").withStyle(ChatFormatting.DARK_AQUA));
         tooltip.add(Component.literal("Ctrl+右鍵: 設定鏡像錨點").withStyle(ChatFormatting.DARK_PURPLE));
         tooltip.add(Component.empty());
-        tooltip.add(Component.literal("Fast Design 建築輔助工具").withStyle(ChatFormatting.GRAY));
+        tooltip.add(Component.literal("Fast Design v2 建築輔助工具").withStyle(ChatFormatting.GRAY));
     }
 }

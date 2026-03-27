@@ -106,6 +106,9 @@ public class FdCommandRegistry {
             .then(Commands.literal("undo")
                 .executes(ctx -> undoLast(ctx.getSource())))
 
+            .then(Commands.literal("deselect")
+                .executes(ctx -> deselect(ctx.getSource())))
+
             .then(Commands.literal("cad")
                 .executes(ctx -> openCadSelection(ctx.getSource()))
                 .then(Commands.argument("name", StringArgumentType.word())
@@ -549,6 +552,31 @@ public class FdCommandRegistry {
             "§6[FD] §fUndo '§e%s§f' — restored §a%d §fblocks", opDesc, restored
         )), true);
 
+        return 1;
+    }
+
+    /**
+     * /fd deselect — 取消選取區域
+     */
+    private static int deselect(CommandSourceStack src) {
+        ServerPlayer player = src.getPlayer();
+        if (player == null) return fail(src, "Requires a player");
+
+        UUID uuid = player.getUUID();
+        if (!PlayerSelectionManager.hasSelection(uuid)) {
+            return fail(src, "沒有選取區域可以取消");
+        }
+
+        PlayerSelectionManager.clear(uuid);
+
+        // 同步客戶端清除選取框渲染
+        FdNetwork.CHANNEL.send(
+            net.minecraftforge.network.PacketDistributor.PLAYER.with(() -> player),
+            FdSelectionSyncPacket.clearSelection()
+        );
+
+        // 清除幽靈預覽（如果有）
+        src.sendSuccess(() -> Component.literal("§6[FD] §f選取區域已清除"), true);
         return 1;
     }
 

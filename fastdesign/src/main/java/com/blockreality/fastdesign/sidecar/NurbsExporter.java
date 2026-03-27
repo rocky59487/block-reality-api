@@ -123,9 +123,9 @@ public class NurbsExporter {
         SidecarBridge bridge = SidecarBridge.getInstance();
         if (!bridge.isRunning()) {
             try {
-                bridge.start();
+                bridge.startAsync().get(60, java.util.concurrent.TimeUnit.SECONDS);
                 LOGGER.info("[NURBS] SidecarBridge auto-started for export");
-            } catch (IOException e) {
+            } catch (Exception e) {
                 throw new IOException("無法啟動 Sidecar：" + e.getMessage(), e);
             }
         }

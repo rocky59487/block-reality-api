@@ -5,7 +5,9 @@ import com.blockreality.api.command.PlayerSelectionManager;
 import com.blockreality.api.placement.MultiBlockCalculator;
 import com.blockreality.fastdesign.build.BuildModeState;
 import com.blockreality.fastdesign.command.FdExtendedCommands;
+import com.blockreality.fastdesign.command.DeltaUndoManager;
 import com.blockreality.fastdesign.command.UndoManager;
+import java.util.UUID;
 import com.blockreality.fastdesign.sidecar.NurbsExporter;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.FriendlyByteBuf;
@@ -44,6 +46,7 @@ public class FdActionPacket {
 
     public enum Action {
         UNDO,
+        REDO,
         SAVE,
         LOAD,
         EXPORT,
@@ -68,7 +71,11 @@ public class FdActionPacket {
         HOLOGRAM_TOGGLE,
         OPEN_CAD,
         // Multi-block placement (Effortless Building port)
-        PLACE_MULTI
+        PLACE_MULTI,
+        // 選取管理
+        DESELECT,
+        SHIFT_SELECTION,
+        RESIZE_SELECTION
     }
 
     private final Action action;
@@ -138,6 +145,9 @@ public class FdActionPacket {
                     case UNDO:
                         handleUndo(player, level);
                         break;
+                    case REDO:
+                        handleRedo(player, level);
+                        break;
                     case SAVE:
                         handleSave(player, level, pkt.payload);
                         break;
@@ -204,6 +214,15 @@ public class FdActionPacket {
                     case PLACE_MULTI:
                         handlePlaceMulti(player, level, pkt.payload);
                         break;
+                    case DESELECT:
+                        handleDeselect(player);
+                        break;
+                    case SHIFT_SELECTION:
+                        handleShiftSelection(player, pkt.payload);
+                        break;
+                    case RESIZE_SELECTION:
+                        handleResizeSelection(player, pkt.payload);
+                        break;
                     default:
                         LOGGER.warn("Unknown FdActionPacket action: {}", pkt.action);
                 }
@@ -219,11 +238,16 @@ public class FdActionPacket {
     }
 
     /**
-     * 還原最後的操作
+     * 還原最後的操作 — 優先使用 DeltaUndoManager，回退到舊版 UndoManager
      */
     private static void handleUndo(ServerPlayer player, ServerLevel level) {
-        int blocksRestored = UndoManager.undo(player.getUUID(), level);
+        UUID uuid = player.getUUID();
+        // 優先嘗試 Delta undo（v2.0 差異引擎）
+        int blocksRestored = DeltaUndoManager.getUndoStackSize(uuid) > 0
+            ? DeltaUndoManager.undo(uuid, level)
+            : UndoManager.undo(uuid, level);
         if (blocksRestored > 0) {
+            String desc = DeltaUndoManager.peekUndoDescription(uuid);
             player.displayClientMessage(
                 Component.literal("§a[Fast Design] 已還原 " + blocksRestored + " 個方塊"),
                 false
@@ -234,6 +258,117 @@ public class FdActionPacket {
                 false
             );
         }
+    }
+
+    /**
+     * 重做最近被撤銷的操作 — v2.0 新增
+     */
+    private static void handleRedo(ServerPlayer player, ServerLevel level) {
+        UUID uuid = player.getUUID();
+        int blocksRedone = DeltaUndoManager.redo(uuid, level);
+        if (blocksRedone > 0) {
+            player.displayClientMessage(
+                Component.literal("§a[Fast Design] 已重做 " + blocksRedone + " 個方塊"),
+                false
+            );
+        } else {
+            player.displayClientMessage(
+                Component.literal("§c[Fast Design] 沒有可重做的操作"),
+                false
+            );
+        }
+    }
+
+    /**
+     * 取消選取 — 清除玩家的選取區域並同步客戶端
+     */
+    private static void handleDeselect(ServerPlayer player) {
+        UUID uuid = player.getUUID();
+        if (!PlayerSelectionManager.hasSelection(uuid)) {
+            player.displayClientMessage(
+                Component.literal("§c[Fast Design] 沒有選取區域可以取消"),
+                false
+            );
+            return;
+        }
+        PlayerSelectionManager.clear(uuid);
+        FdNetwork.CHANNEL.send(
+            PacketDistributor.PLAYER.with(() -> player),
+            FdSelectionSyncPacket.clearSelection()
+        );
+        player.displayClientMessage(
+            Component.literal("§a[Fast Design] 選取區域已清除"),
+            false
+        );
+    }
+
+    /**
+     * 上下平移選取區域 — payload: "up" 或 "down"
+     */
+    private static void handleShiftSelection(ServerPlayer player, String payload) {
+        UUID uuid = player.getUUID();
+        if (!PlayerSelectionManager.hasSelection(uuid)) {
+            player.displayClientMessage(
+                Component.literal("§c[Fast Design] 沒有選取區域可以移動"), false);
+            return;
+        }
+        int dy = "up".equals(payload) ? 1 : -1;
+        BlockPos p1 = PlayerSelectionManager.getPos1(uuid);
+        BlockPos p2 = PlayerSelectionManager.getPos2(uuid);
+        BlockPos newP1 = p1.offset(0, dy, 0);
+        BlockPos newP2 = p2.offset(0, dy, 0);
+        PlayerSelectionManager.setPos1(uuid, newP1);
+        PlayerSelectionManager.setPos2(uuid, newP2);
+        syncSelection(player, uuid);
+    }
+
+    /**
+     * 拖動選取邊界調整大小 — payload: "face,value"
+     * face: x+, x-, y+, y-, z+, z-
+     * value: 新的座標值
+     */
+    private static void handleResizeSelection(ServerPlayer player, String payload) {
+        UUID uuid = player.getUUID();
+        if (!PlayerSelectionManager.hasSelection(uuid)) {
+            player.displayClientMessage(
+                Component.literal("§c[Fast Design] 沒有選取區域可以調整"), false);
+            return;
+        }
+        String[] parts = payload.split(",");
+        if (parts.length != 2) return;
+        try {
+            String face = parts[0];
+            int value = Integer.parseInt(parts[1]);
+
+            var sel = PlayerSelectionManager.getSelection(uuid);
+            int minX = sel.min().getX(), minY = sel.min().getY(), minZ = sel.min().getZ();
+            int maxX = sel.max().getX(), maxY = sel.max().getY(), maxZ = sel.max().getZ();
+
+            switch (face) {
+                case "x-" -> minX = Math.min(value, maxX);
+                case "x+" -> maxX = Math.max(value, minX);
+                case "y-" -> minY = Math.min(value, maxY);
+                case "y+" -> maxY = Math.max(value, minY);
+                case "z-" -> minZ = Math.min(value, maxZ);
+                case "z+" -> maxZ = Math.max(value, minZ);
+                default -> { return; }
+            }
+
+            PlayerSelectionManager.setPos1(uuid, new BlockPos(minX, minY, minZ));
+            PlayerSelectionManager.setPos2(uuid, new BlockPos(maxX, maxY, maxZ));
+            syncSelection(player, uuid);
+        } catch (NumberFormatException ignored) {}
+    }
+
+    /**
+     * 同步選取區域至客戶端（共用工具方法）
+     */
+    private static void syncSelection(ServerPlayer player, UUID uuid) {
+        var sel = PlayerSelectionManager.getSelection(uuid);
+        FdNetwork.CHANNEL.send(
+            PacketDistributor.PLAYER.with(() -> player),
+            new FdSelectionSyncPacket(sel.min(), sel.max())
+        );
     }
 
     /**
@@ -740,18 +875,23 @@ public class FdActionPacket {
                 return;
             }
 
-            // 儲存 undo 快照
-            UndoManager.pushSnapshotForPositions(player.getUUID(), level,
-                positions, "PLACE_MULTI " + decoded.mode().name());
+            // Delta undo: 捕獲操作前狀態
+            List<BlockPos> validPositions = new java.util.ArrayList<>();
+            for (BlockPos pos : positions) {
+                if (level.isInWorldBounds(pos)) validPositions.add(pos);
+            }
+            var beforeMap = DeltaUndoManager.captureBeforeState(level, validPositions);
 
             // 放置方塊
             int placed = 0;
-            for (BlockPos pos : positions) {
-                if (level.isInWorldBounds(pos)) {
-                    level.setBlock(pos, placeState, Block.UPDATE_ALL);
-                    placed++;
-                }
+            for (BlockPos pos : validPositions) {
+                level.setBlock(pos, placeState, Block.UPDATE_ALL);
+                placed++;
             }
+
+            // Delta undo: 提交變更
+            DeltaUndoManager.commitChanges(player.getUUID(), level,
+                beforeMap, "PLACE_MULTI " + decoded.mode().name());
 
             player.displayClientMessage(
                 Component.literal("§a[Fast Design] " + decoded.mode().getDisplayName() +
