@@ -162,6 +162,7 @@ public class SnapshotBuilder {
         if (be instanceof RBlockEntity rbe) {
             RMaterial mat = rbe.getMaterial();
             ChiselState cs = rbe.getChiselState();
+            // ★ audit-fix M-6: 傳遞 X 和 Y 軸的截面屬性
             return new RBlockState(
                 mat.getMaterialId(),
                 (float) (mat.getDensity() * cs.fillRatio()),  // 質量按填充率縮放
@@ -170,7 +171,9 @@ public class SnapshotBuilder {
                 rbe.isAnchored(),
                 (float) cs.crossSectionArea(),
                 (float) cs.momentOfInertiaX(),
-                (float) cs.sectionModulusX()
+                (float) cs.sectionModulusX(),
+                (float) cs.momentOfInertiaY(),
+                (float) cs.sectionModulusY()
             );
         }
         return translate(mcState);

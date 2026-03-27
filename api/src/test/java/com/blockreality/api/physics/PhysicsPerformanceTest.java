@@ -81,34 +81,8 @@ class PhysicsPerformanceTest {
             assertEquals(fp1, fp2);
         }
 
-        @Test
-        @DisplayName("deltaFingerprint: add then remove returns to base")
-        void deltaFingerprintAddRemoveReturnsToBase() {
-            long base = 0xcbf29ce484222325L; // FNV-1a offset basis
-            BlockPos pos = new BlockPos(1, 2, 3);
-            RMaterial mat = DefaultMaterial.TIMBER;
-
-            // Add a block
-            long afterAdd = ForceEquilibriumSolver.deltaFingerprint(base, null, null, pos, mat);
-            assertNotEquals(base, afterAdd, "Adding a block should change fingerprint");
-
-            // Remove the same block
-            long afterRemove = ForceEquilibriumSolver.deltaFingerprint(afterAdd, pos, mat, null, null);
-            assertEquals(base, afterRemove,
-                "XOR-based delta: add then remove should return to base fingerprint");
-        }
-
-        @Test
-        @DisplayName("deltaFingerprint: swap block position changes result")
-        void deltaFingerprintSwapChangesResult() {
-            long base = 12345L;
-            BlockPos oldPos = new BlockPos(0, 0, 0);
-            BlockPos newPos = new BlockPos(1, 0, 0);
-            RMaterial mat = DefaultMaterial.STONE;
-
-            long updated = ForceEquilibriumSolver.deltaFingerprint(base, oldPos, mat, newPos, mat);
-            assertNotEquals(base, updated, "Swapping position should change fingerprint");
-        }
+        // ★ audit-fix C-2: deltaFingerprint tests removed — method was removed
+        // because XOR delta is not equivalent to FNV-1a chain fingerprint.
     }
 
     // ═══════════════════════════════════════════════════

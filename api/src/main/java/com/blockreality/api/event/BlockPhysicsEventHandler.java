@@ -183,6 +183,8 @@ public class BlockPhysicsEventHandler {
             java.util.Set<BlockPos> blockPositions = new java.util.HashSet<>();
             java.util.Map<BlockPos, RMaterial> materials = new java.util.HashMap<>();
             java.util.Set<BlockPos> anchors = new java.util.HashSet<>();
+            // ★ audit-fix C-4: 收集雕刻形狀的截面積
+            java.util.Map<BlockPos, Float> effectiveAreas = new java.util.HashMap<>();
 
             BlockPos start = center.offset(-radius, -radius, -radius);
             BlockPos end = center.offset(radius, radius, radius);
@@ -204,6 +206,11 @@ public class BlockPhysicsEventHandler {
                             if (rbe.isAnchored()) {
                                 anchors.add(pos);
                             }
+                            // ★ audit-fix C-4: 傳遞雕刻截面積到求解器
+                            com.blockreality.api.chisel.ChiselState cs = rbe.getChiselState();
+                            if (!cs.isFull()) {
+                                effectiveAreas.put(pos, (float) cs.crossSectionArea());
+                            }
                         } else {
                             // 原版方塊 → VanillaMaterialMap
                             String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
@@ -219,8 +226,9 @@ public class BlockPhysicsEventHandler {
 
             // 執行力平衡求解
             if (!blockPositions.isEmpty()) {
+                // ★ audit-fix C-4: 傳入截面積數據
                 java.util.Map<BlockPos, ForceEquilibriumSolver.ForceResult> results =
-                    ForceEquilibriumSolver.solve(blockPositions, materials, anchors);
+                    ForceEquilibriumSolver.solve(blockPositions, materials, anchors, effectiveAreas);
 
                 // 統計不穩定方塊並記錄 + 觸發 StressUpdateEvent
                 long unstableCount = 0;

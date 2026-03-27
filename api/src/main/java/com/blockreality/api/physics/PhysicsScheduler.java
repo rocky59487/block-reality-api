@@ -97,14 +97,16 @@ public class PhysicsScheduler {
 
             if (tier == PhysicsTier.DORMANT) continue; // 休眠 island 不排程
 
-            // 最近玩家距離
+            // ★ audit-fix M-2: 使用 3D 距離（與 PhysicsTier.forIsland 一致）
             double minDistSq = Double.MAX_VALUE;
             double cx = (island.getMinCorner().getX() + island.getMaxCorner().getX()) / 2.0;
+            double cy = (island.getMinCorner().getY() + island.getMaxCorner().getY()) / 2.0;
             double cz = (island.getMinCorner().getZ() + island.getMaxCorner().getZ()) / 2.0;
             for (ServerPlayer player : players) {
                 double dx = player.getX() - cx;
+                double dy = player.getY() - cy;
                 double dz = player.getZ() - cz;
-                minDistSq = Math.min(minDistSq, dx * dx + dz * dz);
+                minDistSq = Math.min(minDistSq, dx * dx + dy * dy + dz * dz);
             }
 
             double priority = epochDelta * blockCount / (minDistSq + 1.0);

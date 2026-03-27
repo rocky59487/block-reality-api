@@ -253,8 +253,11 @@ public class StructureIslandRegistry {
         reachable.add(seed);
         queue.add(seed);
 
-        // BFS 預算：island 大小（最差情況遍歷整個 island）
-        int budget = Math.min(island.getBlockCount(), 65536);
+        // ★ audit-fix C-3: BFS 預算設為 island 實際大小（無人為截斷）。
+        // 原先 min(size, 65536) 在大型結構中截斷 BFS，導致未遍歷到的鄰居
+        // 被誤判為不可達，觸發錯誤分裂。island.members 已在記憶體中，
+        // O(N) BFS 不會造成效能問題。
+        int budget = island.getBlockCount();
         int visited = 0;
 
         while (!queue.isEmpty() && visited < budget) {
@@ -289,9 +292,11 @@ public class StructureIslandRegistry {
         Set<BlockPos> remaining = new HashSet<>(island.members);
         remaining.removeAll(reachable);
 
-        // 更新原 island 為 reachable 集合
-        island.members.clear();
-        island.members.addAll(reachable);
+        // ★ audit-fix M-1: 先加入新成員再移除舊成員（避免 clear→addAll 的中間空狀態）。
+        // 雖然 @ThreadSafe 標記要求所有修改在 server thread，但防禦性編碼更安全。
+        // retainAll 等效於 clear+addAll 但對 ConcurrentHashMap.KeySetView 也不是原子的，
+        // 因此改為：先加所有 reachable（大多已存在，addAll 是冪等的），再 retainAll 移除非 reachable。
+        island.members.retainAll(reachable);
         island.recalculateBounds();
         island.touch(epoch);
 
@@ -321,6 +326,8 @@ public class StructureIslandRegistry {
 
             newIsland.touch(epoch);
             islands.put(newId, newIsland);
+            // ★ audit-fix C-5: 新分裂的 island 必須標記 dirty，否則物理不會重算
+            PhysicsScheduler.markDirty(newId, epoch);
             LOGGER.info("[IslandRegistry] Split: new island {} with {} blocks from island {}",
                 newId, newIsland.getBlockCount(), removedIslandId);
         }

@@ -221,7 +221,22 @@ public class ForceEquilibriumSolver {
         Map<BlockPos, RMaterial> materials,
         Set<BlockPos> anchors
     ) {
-        return solveWithDiagnostics(blocks, materials, anchors, DEFAULT_OMEGA).results();
+        return solveWithDiagnostics(blocks, materials, anchors, DEFAULT_OMEGA, Collections.emptyMap()).results();
+    }
+
+    /**
+     * ★ audit-fix C-4: 支援逐方塊截面積的求解入口。
+     * 雕刻形狀的截面積 < 1.0m²，需透過此 overload 傳入。
+     *
+     * @param effectiveAreas 方塊位置 → 有效截面積 (m²)。未列入的方塊使用 BLOCK_AREA (1.0)。
+     */
+    public static Map<BlockPos, ForceResult> solve(
+        Set<BlockPos> blocks,
+        Map<BlockPos, RMaterial> materials,
+        Set<BlockPos> anchors,
+        Map<BlockPos, Float> effectiveAreas
+    ) {
+        return solveWithDiagnostics(blocks, materials, anchors, DEFAULT_OMEGA, effectiveAreas).results();
     }
 
     /**
@@ -239,10 +254,23 @@ public class ForceEquilibriumSolver {
         Set<BlockPos> anchors,
         double initialOmega
     ) {
+        return solveWithDiagnostics(blocks, materials, anchors, initialOmega, Collections.emptyMap());
+    }
+
+    /**
+     * ★ audit-fix C-4: 完整版求解入口，支援逐方塊截面積。
+     */
+    public static SolverResult solveWithDiagnostics(
+        Set<BlockPos> blocks,
+        Map<BlockPos, RMaterial> materials,
+        Set<BlockPos> anchors,
+        double initialOmega,
+        Map<BlockPos, Float> effectiveAreas
+    ) {
         long startTime = System.nanoTime();
 
-        // 初始化節點狀態
-        Map<BlockPos, NodeState> nodeStates = initializeNodeStates(blocks, materials, anchors);
+        // 初始化節點狀態（★ audit-fix C-4: 傳入 effectiveAreas）
+        Map<BlockPos, NodeState> nodeStates = initializeNodeStates(blocks, materials, anchors, effectiveAreas);
 
         // ★ review-fix #19: 排序一次，供所有迭代重複使用（節省 O(N log N) × iter 開銷）
         List<BlockPos> sortedByY = new ArrayList<>(blocks);
@@ -356,7 +384,8 @@ public class ForceEquilibriumSolver {
     private static Map<BlockPos, NodeState> initializeNodeStates(
         Set<BlockPos> blocks,
         Map<BlockPos, RMaterial> materials,
-        Set<BlockPos> anchors
+        Set<BlockPos> anchors,
+        Map<BlockPos, Float> effectiveAreas
     ) {
         Map<BlockPos, NodeState> states = new HashMap<>();
 
@@ -389,6 +418,11 @@ public class ForceEquilibriumSolver {
                 }
             }
 
+            // ★ audit-fix C-4: 從 effectiveAreas 讀取實際截面積，未指定則預設 BLOCK_AREA
+            double area = effectiveAreas.containsKey(pos)
+                ? effectiveAreas.get(pos).doubleValue()
+                : BLOCK_AREA;
+
             NodeState ns = new NodeState(
                 pos,
                 mat,
@@ -399,7 +433,7 @@ public class ForceEquilibriumSolver {
                 dependents,
                 initialForce,   // lastTotalForce
                 false,          // converged 初始 = false
-                BLOCK_AREA      // effectiveArea: 預設全塊，由 solveWithDiagnostics 覆寫
+                area            // ★ audit-fix C-4: 使用實際截面積
             );
             states.put(pos, ns);
         }
@@ -467,36 +501,10 @@ public class ForceEquilibriumSolver {
         return posHash ^ (matBits * FNV1A_PRIME);
     }
 
-    /**
-     * ★ Phase 3a: Delta fingerprint — O(1) 增量更新。
-     * <p>
-     * 當結構只變動一個方塊時，不需重新排序+hash 全部 N 個 BlockPos。
-     * 利用 XOR 的自反性：XOR 出舊方塊的貢獻值，XOR 進新方塊的貢獻值。
-     * <p>
-     * 注意：因為原始 fingerprint 使用有序 reduce (FNV-1a chain)，
-     * XOR delta 只是「近似」增量更新。在 warm-start 場景中，
-     * 偶爾的 fingerprint 碰撞只會導致 cache miss（安全降級），
-     * 不會產生錯誤結果。對於超過 3 個方塊的變動，回退到全量計算。
-     *
-     * @param baseFingerprint 上一次完整計算的 fingerprint
-     * @param removed         被移除的方塊（null 表示無移除）
-     * @param removedMat      被移除方塊的材料
-     * @param added           被新增的方塊（null 表示無新增）
-     * @param addedMat        被新增方塊的材料
-     * @return 更新後的 fingerprint（近似值）
-     */
-    static long deltaFingerprint(long baseFingerprint,
-                                  BlockPos removed, RMaterial removedMat,
-                                  BlockPos added, RMaterial addedMat) {
-        long result = baseFingerprint;
-        if (removed != null) {
-            result ^= blockFingerprint(removed, removedMat);
-        }
-        if (added != null) {
-            result ^= blockFingerprint(added, addedMat);
-        }
-        return result;
-    }
+    // ★ audit-fix C-2: deltaFingerprint 已移除。
+    // XOR delta 與 FNV-1a chain 不等價（XOR 是交換結合的，FNV-1a chain 是有序的），
+    // 導致 delta 更新產生的 fingerprint 與全量重算不同，造成 warm-start cache 假命中。
+    // 結構通常 < 1000 blocks，全量 computeStructureFingerprint 的 O(N log N) 完全可接受。
 
     /**
      * 執行一次 SOR (Successive Over-Relaxation) 迭代步驟。

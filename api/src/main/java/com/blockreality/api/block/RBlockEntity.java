@@ -87,6 +87,14 @@ public class RBlockEntity extends BlockEntity {
     /** 雕刻狀態 — 預設為完整方塊，向後相容 */
     private ChiselState chiselState = ChiselState.FULL;
 
+    /**
+     * ★ audit-fix M-4: 自訂形狀的 VoxelShape 快取。
+     * 模板形狀已在 RBlock.SHAPE_CACHE 中快取，此處僅快取 CUSTOM 形狀。
+     * setChiselState() 時清除。
+     */
+    @Nullable
+    private transient net.minecraft.world.phys.shapes.VoxelShape cachedCustomShape = null;
+
     // ─── 區塊卸載標記 ───
     /** ★ H-1: 區塊正在卸載時為 true，setRemoved() 中跳過崩塌邏輯 */
     private transient boolean chunkUnloading = false;
@@ -148,8 +156,22 @@ public class RBlockEntity extends BlockEntity {
 
     public void setChiselState(ChiselState state) {
         this.chiselState = state != null ? state : ChiselState.FULL;
+        this.cachedCustomShape = null; // ★ audit-fix M-4: 清除形狀快取
         setChanged();
         syncToClient();
+    }
+
+    /**
+     * ★ audit-fix M-4: 取得或建立自訂形狀的 VoxelShape 快取。
+     * 僅用於 CUSTOM 形狀（非模板），避免每次 getShape() 重建。
+     */
+    @Nullable
+    public net.minecraft.world.phys.shapes.VoxelShape getCachedCustomShape() {
+        return cachedCustomShape;
+    }
+
+    public void setCachedCustomShape(net.minecraft.world.phys.shapes.VoxelShape shape) {
+        this.cachedCustomShape = shape;
     }
 
     // ─── Setters (with sync) ───
@@ -379,6 +401,7 @@ public class RBlockEntity extends BlockEntity {
         } else {
             this.chiselState = ChiselState.FULL;
         }
+        this.cachedCustomShape = null; // ★ audit-fix M-4: 載入 NBT 時清除形狀快取
     }
 
     // ─── Client 同步包 ───

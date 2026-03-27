@@ -92,19 +92,24 @@ public class RBlock extends BaseEntityBlock {
         if (be instanceof RBlockEntity rbe) {
             ChiselState cs = rbe.getChiselState();
             if (!cs.isFull()) {
-                return getChiselShape(cs);
+                return getChiselShape(cs, rbe);
             }
         }
         return Shapes.block();
     }
 
-    private static VoxelShape getChiselShape(ChiselState cs) {
+    private static VoxelShape getChiselShape(ChiselState cs, RBlockEntity rbe) {
         if (cs.isTemplate()) {
             // 模板形狀使用快取
             return SHAPE_CACHE.computeIfAbsent(cs.shape(), RBlock::buildTemplateShape);
         }
-        // 自訂形狀：從體素網格動態生成
-        return buildVoxelShape(cs.voxelGrid());
+        // ★ audit-fix M-4: 自訂形狀使用 RBlockEntity 上的快取，
+        // 避免每次 getShape() 呼叫重新生成（getShape 每 tick 每方塊可能呼叫多次）
+        VoxelShape cached = rbe.getCachedCustomShape();
+        if (cached != null) return cached;
+        VoxelShape built = buildVoxelShape(cs.voxelGrid());
+        rbe.setCachedCustomShape(built);
+        return built;
     }
 
     private static VoxelShape buildTemplateShape(SubBlockShape shape) {
