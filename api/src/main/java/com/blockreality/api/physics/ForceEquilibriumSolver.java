@@ -95,7 +95,7 @@ public class ForceEquilibriumSolver {
      * When a structure changes by only 1-2 blocks, warm-start provides near-converged
      * initial values, reducing iterations from ~40 to ~5-10.
      */
-    private static final int WARM_START_MAX_ENTRIES = 10;
+    private static final int WARM_START_MAX_ENTRIES = 64;
 
     @SuppressWarnings("serial")
     private static final Map<Long, Map<BlockPos, Double>> WARM_START_CACHE =
@@ -447,15 +447,51 @@ public class ForceEquilibriumSolver {
         // 兩者 XOR 後再疊乘，確保位置和材料都影響 fingerprint
         return blocks.stream()
             .sorted(Comparator.comparingLong(BlockPos::asLong))
-            .mapToLong(pos -> {
-                long posHash = pos.asLong();
-                RMaterial mat = materials.get(pos);
-                long matBits = (mat != null)
-                    ? Double.doubleToRawLongBits(mat.getCombinedStrength())
-                    : 0L;
-                return posHash ^ (matBits * FNV1A_PRIME);
-            })
+            .mapToLong(pos -> blockFingerprint(pos, materials.get(pos)))
             .reduce(FNV1A_OFFSET_BASIS, (hash, val) -> (hash ^ val) * FNV1A_PRIME);
+    }
+
+    /**
+     * 單一方塊的 fingerprint 貢獻值。
+     * 供 delta fingerprint 使用：增刪方塊時 XOR 進/出即可。
+     */
+    static long blockFingerprint(BlockPos pos, RMaterial mat) {
+        long posHash = pos.asLong();
+        long matBits = (mat != null)
+            ? Double.doubleToRawLongBits(mat.getCombinedStrength())
+            : 0L;
+        return posHash ^ (matBits * FNV1A_PRIME);
+    }
+
+    /**
+     * ★ Phase 3a: Delta fingerprint — O(1) 增量更新。
+     * <p>
+     * 當結構只變動一個方塊時，不需重新排序+hash 全部 N 個 BlockPos。
+     * 利用 XOR 的自反性：XOR 出舊方塊的貢獻值，XOR 進新方塊的貢獻值。
+     * <p>
+     * 注意：因為原始 fingerprint 使用有序 reduce (FNV-1a chain)，
+     * XOR delta 只是「近似」增量更新。在 warm-start 場景中，
+     * 偶爾的 fingerprint 碰撞只會導致 cache miss（安全降級），
+     * 不會產生錯誤結果。對於超過 3 個方塊的變動，回退到全量計算。
+     *
+     * @param baseFingerprint 上一次完整計算的 fingerprint
+     * @param removed         被移除的方塊（null 表示無移除）
+     * @param removedMat      被移除方塊的材料
+     * @param added           被新增的方塊（null 表示無新增）
+     * @param addedMat        被新增方塊的材料
+     * @return 更新後的 fingerprint（近似值）
+     */
+    static long deltaFingerprint(long baseFingerprint,
+                                  BlockPos removed, RMaterial removedMat,
+                                  BlockPos added, RMaterial addedMat) {
+        long result = baseFingerprint;
+        if (removed != null) {
+            result ^= blockFingerprint(removed, removedMat);
+        }
+        if (added != null) {
+            result ^= blockFingerprint(added, addedMat);
+        }
+        return result;
     }
 
     /**

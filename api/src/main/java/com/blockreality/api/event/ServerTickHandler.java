@@ -3,7 +3,9 @@ package com.blockreality.api.event;
 import com.blockreality.api.BlockRealityMod;
 import com.blockreality.api.collapse.CollapseManager;
 import com.blockreality.api.construction.ConstructionZoneManager;
+import com.blockreality.api.physics.PhysicsScheduler;
 import com.blockreality.api.physics.ResultApplicator;
+import com.blockreality.api.physics.StructureIslandRegistry;
 import com.blockreality.api.physics.UnionFindEngine;
 import com.blockreality.api.spi.ModuleRegistry;
 import net.minecraft.core.BlockPos;
@@ -112,6 +114,9 @@ public class ServerTickHandler {
         // ★ R3-10 fix: 世界卸載時清理 ResultApplicator 失敗追蹤，
         // 防止殘留的 BlockPos 在其他世界的 retryFailed() 中被錯誤查詢。
         ResultApplicator.clearFailedPositions();
-        LOGGER.debug("[BR-Tick] Collapse queue & failed positions cleared on world unload");
+        // ★ Phase 1/7: 清理 Island Registry 和排程器
+        StructureIslandRegistry.clear();
+        PhysicsScheduler.clear();
+        LOGGER.debug("[BR-Tick] Collapse queue, failed positions, island registry & scheduler cleared on world unload");
     }
 }

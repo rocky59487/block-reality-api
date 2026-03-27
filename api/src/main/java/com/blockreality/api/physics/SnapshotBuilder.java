@@ -52,10 +52,11 @@ public class SnapshotBuilder {
         int sizeZ = maxZ - minZ + 1;
         int totalBlocks = sizeX * sizeY * sizeZ;
 
-        if (totalBlocks > RWorldSnapshot.MAX_SNAPSHOT_BLOCKS) {
+        int effectiveMax = RWorldSnapshot.getMaxSnapshotBlocks();
+        if (totalBlocks > effectiveMax) {
             throw new IllegalArgumentException(
-                String.format("Snapshot exceeds MAX_SNAPSHOT_BLOCKS (%d). Attempted: %dx%dx%d = %d",
-                    RWorldSnapshot.MAX_SNAPSHOT_BLOCKS, sizeX, sizeY, sizeZ, totalBlocks)
+                String.format("Snapshot exceeds max_snapshot_blocks (%d). Attempted: %dx%dx%d = %d",
+                    effectiveMax, sizeX, sizeY, sizeZ, totalBlocks)
             );
         }
 

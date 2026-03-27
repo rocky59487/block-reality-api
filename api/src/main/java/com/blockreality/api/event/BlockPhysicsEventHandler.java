@@ -11,7 +11,9 @@ import com.blockreality.api.material.VanillaMaterialMap;
 import com.blockreality.api.physics.AnchorContinuityChecker;
 import com.blockreality.api.physics.ForceEquilibriumSolver;
 import com.blockreality.api.physics.LoadPathEngine;
+import com.blockreality.api.physics.PhysicsScheduler;
 import com.blockreality.api.physics.RCFusionDetector;
+import com.blockreality.api.physics.StructureIslandRegistry;
 import com.blockreality.api.physics.UnionFindEngine;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -61,6 +63,13 @@ public class BlockPhysicsEventHandler {
         // 立即標記快取為髒（事件執行緒即可，ConcurrentHashMap 安全）
         AnchorContinuityChecker.getInstance().markDirty(pos);
         UnionFindEngine.notifyStructureChanged(pos);
+
+        // ★ Phase 1: 登錄到 Island Registry
+        long epoch = UnionFindEngine.getStructureEpoch();
+        int islandId = StructureIslandRegistry.registerBlock(pos, epoch);
+
+        // ★ Phase 7: 排程物理重算
+        PhysicsScheduler.markDirty(islandId, epoch);
 
         level.getServer().execute(() -> {
             // RC 融合偵測（在 BE 初始化後）
@@ -115,8 +124,16 @@ public class BlockPhysicsEventHandler {
         AnchorContinuityChecker.getInstance().markDirty(pos);
         UnionFindEngine.notifyStructureChanged(pos);
 
+        // ★ Phase 1: 從 Island Registry 註銷（在方塊消失前處理）
+        long epoch = UnionFindEngine.getStructureEpoch();
+        int islandId = StructureIslandRegistry.getIslandId(pos);
+
         // 延遲到方塊實際消失後執行崩塌（用快取資料，不讀 BE）
         level.getServer().execute(() -> {
+            // ★ Phase 1: 延遲執行 island 分裂檢查（方塊已消失）
+            StructureIslandRegistry.unregisterBlock(level, pos, epoch);
+            // ★ Phase 7: 排程物理重算（原 island 及可能的分裂 island）
+            PhysicsScheduler.markDirty(islandId, epoch);
             // ★ W-5: RC 融合降級檢查（破壞鋼筋/混凝土時，鄰居 RC_NODE 降級）
             int downgrades = RCFusionDetector.checkAndDowngrade(level, pos, cachedBlockType);
             if (downgrades > 0) {
