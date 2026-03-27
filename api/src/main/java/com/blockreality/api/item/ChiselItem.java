@@ -76,6 +76,22 @@ public class ChiselItem extends Item {
         super(new Item.Properties().stacksTo(1));
     }
 
+    @Override
+    public void appendHoverText(@NotNull ItemStack stack, @org.jetbrains.annotations.Nullable Level level,
+                                 @NotNull java.util.List<Component> tooltip,
+                                 @NotNull net.minecraft.world.item.TooltipFlag flag) {
+        tooltip.add(Component.literal("右鍵方塊: 套用形狀 / 選區填充").withStyle(net.minecraft.ChatFormatting.AQUA));
+        tooltip.add(Component.literal("Alt: 開啟形狀選單").withStyle(net.minecraft.ChatFormatting.YELLOW));
+        tooltip.add(Component.literal("X+右鍵: 橡皮擦（移除子體素）").withStyle(net.minecraft.ChatFormatting.RED));
+        tooltip.add(Component.empty());
+        tooltip.add(Component.literal("↑↓ 調高度  ←→ 調寬度  H 邊長").withStyle(net.minecraft.ChatFormatting.GRAY));
+        String shape = getCurrentShapeName(stack);
+        int w = getSelectionWidth(stack);
+        int h = getSelectionHeight(stack);
+        tooltip.add(Component.literal("形狀: " + shape + "  選區: " + w + "×" + h)
+            .withStyle(net.minecraft.ChatFormatting.DARK_GRAY));
+    }
+
     // ═══════════════════════════════════════════════════
     //  右鍵方塊：套用形狀 / 選區填充 / 橡皮擦
     // ═══════════════════════════════════════════════════
@@ -233,36 +249,15 @@ public class ChiselItem extends Item {
     }
 
     // ═══════════════════════════════════════════════════
-    //  Shift+右鍵空中：循環切換形狀
+    //  右鍵空中：不再使用 Shift 循環（改為 Alt 彈出選單）
     // ═══════════════════════════════════════════════════
 
     @Override
     @NotNull
     public InteractionResultHolder<ItemStack> use(
             @NotNull Level level, @NotNull Player player, @NotNull InteractionHand hand) {
-
-        if (!player.isShiftKeyDown()) {
-            return InteractionResultHolder.pass(player.getItemInHand(hand));
-        }
-
-        ItemStack stack = player.getItemInHand(hand);
-        int currentIdx = getShapeIndex(stack);
-        int nextIdx = (currentIdx + 1) % TEMPLATE_CYCLE.length;
-        setShapeIndex(stack, nextIdx);
-
-        SubBlockShape nextShape = TEMPLATE_CYCLE[nextIdx];
-
-        if (!level.isClientSide) {
-            String extra = nextShape == SubBlockShape.CUSTOM
-                ? " §7(選區: " + getSelectionWidth(stack) + "×" + getSelectionHeight(stack) + ")"
-                : "";
-            player.displayClientMessage(
-                Component.literal("§b[雕刻刀] §f形狀: " + nextShape.getSerializedName() + extra),
-                true
-            );
-        }
-
-        return InteractionResultHolder.success(stack);
+        // 形狀選擇已改為 Alt 長按彈出選單（客戶端 FdKeyBindings 處理）
+        return InteractionResultHolder.pass(player.getItemInHand(hand));
     }
 
     // ═══════════════════════════════════════════════════
@@ -275,14 +270,32 @@ public class ChiselItem extends Item {
         return TEMPLATE_CYCLE[idx];
     }
 
-    private int getShapeIndex(ItemStack stack) {
+    private static int getShapeIndex(ItemStack stack) {
         CompoundTag tag = stack.getTag();
         if (tag == null || !tag.contains(TAG_SHAPE_INDEX)) return 0;
         return tag.getInt(TAG_SHAPE_INDEX);
     }
 
-    private void setShapeIndex(ItemStack stack, int idx) {
+    private static void setShapeIndex(ItemStack stack, int idx) {
         stack.getOrCreateTag().putInt(TAG_SHAPE_INDEX, idx);
+    }
+
+    /** 透過形狀名稱設定（從選單選擇） */
+    public static void setShapeByName(ItemStack stack, SubBlockShape shape) {
+        for (int i = 0; i < TEMPLATE_CYCLE.length; i++) {
+            if (TEMPLATE_CYCLE[i] == shape) {
+                setShapeIndex(stack, i);
+                return;
+            }
+        }
+        setShapeIndex(stack, 0); // fallback to FULL
+    }
+
+    /** 取得當前形狀名稱（用於 ActionBar 顯示） */
+    public static String getCurrentShapeName(ItemStack stack) {
+        int idx = getShapeIndex(stack);
+        if (idx < 0 || idx >= TEMPLATE_CYCLE.length) return "full";
+        return TEMPLATE_CYCLE[idx].getSerializedName();
     }
 
     // ═══════════════════════════════════════════════════

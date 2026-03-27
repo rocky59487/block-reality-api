@@ -45,35 +45,49 @@ public class FdKeyBindings {
         "key.categories.fastdesign"
     );
 
-    // ★ 雕刻刀選區控制鍵
-    public static final KeyMapping CHISEL_HEIGHT_UP = new KeyMapping(
-        "key.fastdesign.chisel_height_up",
+    // ★ 工具選區控制鍵（雕刻刀 + 建築法杖共用）
+    public static final KeyMapping TOOL_HEIGHT_UP = new KeyMapping(
+        "key.fastdesign.tool_height_up",
         InputConstants.KEY_UP,
         "key.categories.fastdesign"
     );
 
-    public static final KeyMapping CHISEL_HEIGHT_DOWN = new KeyMapping(
-        "key.fastdesign.chisel_height_down",
+    public static final KeyMapping TOOL_HEIGHT_DOWN = new KeyMapping(
+        "key.fastdesign.tool_height_down",
         InputConstants.KEY_DOWN,
         "key.categories.fastdesign"
     );
 
-    public static final KeyMapping CHISEL_WIDTH_RIGHT = new KeyMapping(
-        "key.fastdesign.chisel_width_right",
+    public static final KeyMapping TOOL_WIDTH_RIGHT = new KeyMapping(
+        "key.fastdesign.tool_width_right",
         InputConstants.KEY_RIGHT,
         "key.categories.fastdesign"
     );
 
-    public static final KeyMapping CHISEL_WIDTH_LEFT = new KeyMapping(
-        "key.fastdesign.chisel_width_left",
+    public static final KeyMapping TOOL_WIDTH_LEFT = new KeyMapping(
+        "key.fastdesign.tool_width_left",
         InputConstants.KEY_LEFT,
         "key.categories.fastdesign"
     );
 
+    /** H 鍵：調整邊長（寬高同時 ±1）。Shift+H 縮小，H 放大。 */
+    public static final KeyMapping TOOL_EDGE_LENGTH = new KeyMapping(
+        "key.fastdesign.tool_edge_length",
+        InputConstants.KEY_H,
+        "key.categories.fastdesign"
+    );
+
     /** X 鍵：按住啟用橡皮擦模式（取消選取單個方塊） */
-    public static final KeyMapping CHISEL_ERASE = new KeyMapping(
-        "key.fastdesign.chisel_erase",
+    public static final KeyMapping TOOL_ERASE = new KeyMapping(
+        "key.fastdesign.tool_erase",
         InputConstants.KEY_X,
+        "key.categories.fastdesign"
+    );
+
+    /** Alt 鍵：長按彈出雕刻刀形狀選單 */
+    public static final KeyMapping TOOL_MENU = new KeyMapping(
+        "key.fastdesign.tool_menu",
+        InputConstants.KEY_LALT,
         "key.categories.fastdesign"
     );
 
@@ -87,12 +101,14 @@ public class FdKeyBindings {
         public static void onRegisterKeys(RegisterKeyMappingsEvent event) {
             event.register(OPEN_PANEL);
             event.register(CYCLE_BUILD_MODE);
-            // ★ 雕刻刀控制鍵
-            event.register(CHISEL_HEIGHT_UP);
-            event.register(CHISEL_HEIGHT_DOWN);
-            event.register(CHISEL_WIDTH_RIGHT);
-            event.register(CHISEL_WIDTH_LEFT);
-            event.register(CHISEL_ERASE);
+            // ★ 工具控制鍵（雕刻刀 + 法杖共用）
+            event.register(TOOL_HEIGHT_UP);
+            event.register(TOOL_HEIGHT_DOWN);
+            event.register(TOOL_WIDTH_RIGHT);
+            event.register(TOOL_WIDTH_LEFT);
+            event.register(TOOL_EDGE_LENGTH);
+            event.register(TOOL_ERASE);
+            event.register(TOOL_MENU);
         }
     }
 
@@ -150,18 +166,25 @@ public class FdKeyBindings {
         private static boolean wasEraseKeyDown = false;
 
         /**
-         * 處理雕刻刀專用快捷鍵。
-         * 只在玩家手持雕刻刀時生效。
+         * 處理工具快捷鍵 — 雕刻刀 + 建築法杖共用。
+         * 兩種工具使用相同的選區控制邏輯。
          */
         private static void handleChiselKeys(Minecraft mc) {
             if (mc.player == null || mc.screen != null) return;
 
-            // 只在手持雕刻刀時響應
+            // 雕刻刀或法杖都觸發
             boolean holdingChisel =
                 mc.player.getMainHandItem().getItem() instanceof ChiselItem ||
                 mc.player.getOffhandItem().getItem() instanceof ChiselItem;
-            if (!holdingChisel) {
-                // 若切換離開雕刻刀，確保橡皮擦模式關閉
+            boolean holdingWand =
+                mc.player.getMainHandItem().getItem() instanceof
+                    com.blockreality.fastdesign.item.FdWandItem ||
+                mc.player.getOffhandItem().getItem() instanceof
+                    com.blockreality.fastdesign.item.FdWandItem;
+
+            boolean holdingTool = holdingChisel || holdingWand;
+
+            if (!holdingTool) {
                 if (wasEraseKeyDown) {
                     wasEraseKeyDown = false;
                     BRNetwork.CHANNEL.sendToServer(
@@ -170,28 +193,37 @@ public class FdKeyBindings {
                 return;
             }
 
-            // 上下鍵：調高度
-            while (CHISEL_HEIGHT_UP.consumeClick()) {
+            // ─── 上下鍵：調高度 ───
+            while (TOOL_HEIGHT_UP.consumeClick()) {
                 BRNetwork.CHANNEL.sendToServer(
                     new ChiselControlPacket(ChiselControlPacket.Action.SEL_HEIGHT_INC));
             }
-            while (CHISEL_HEIGHT_DOWN.consumeClick()) {
+            while (TOOL_HEIGHT_DOWN.consumeClick()) {
                 BRNetwork.CHANNEL.sendToServer(
                     new ChiselControlPacket(ChiselControlPacket.Action.SEL_HEIGHT_DEC));
             }
 
-            // 左右鍵：調寬度
-            while (CHISEL_WIDTH_RIGHT.consumeClick()) {
+            // ─── 左右鍵：調寬度 ───
+            while (TOOL_WIDTH_RIGHT.consumeClick()) {
                 BRNetwork.CHANNEL.sendToServer(
                     new ChiselControlPacket(ChiselControlPacket.Action.SEL_WIDTH_INC));
             }
-            while (CHISEL_WIDTH_LEFT.consumeClick()) {
+            while (TOOL_WIDTH_LEFT.consumeClick()) {
                 BRNetwork.CHANNEL.sendToServer(
                     new ChiselControlPacket(ChiselControlPacket.Action.SEL_WIDTH_DEC));
             }
 
-            // X 鍵：按住 = 橡皮擦模式（偵測邊緣觸發，避免每 tick 發封包）
-            boolean isEraseDown = CHISEL_ERASE.isDown();
+            // ─── H 鍵：邊長（寬高同時調整），Shift+H 縮小 ───
+            while (TOOL_EDGE_LENGTH.consumeClick()) {
+                boolean shrink = net.minecraft.client.gui.screens.Screen.hasShiftDown();
+                ChiselControlPacket.Action edgeAction = shrink
+                    ? ChiselControlPacket.Action.EDGE_LENGTH_DEC
+                    : ChiselControlPacket.Action.EDGE_LENGTH_INC;
+                BRNetwork.CHANNEL.sendToServer(new ChiselControlPacket(edgeAction));
+            }
+
+            // ─── X 鍵：按住 = 橡皮擦模式（邊緣觸發） ───
+            boolean isEraseDown = TOOL_ERASE.isDown();
             if (isEraseDown && !wasEraseKeyDown) {
                 BRNetwork.CHANNEL.sendToServer(
                     new ChiselControlPacket(ChiselControlPacket.Action.ERASE_ON));
@@ -200,6 +232,17 @@ public class FdKeyBindings {
                     new ChiselControlPacket(ChiselControlPacket.Action.ERASE_OFF));
             }
             wasEraseKeyDown = isEraseDown;
+
+            // ─── Alt 鍵：長按彈出工具選單 ───
+            while (TOOL_MENU.consumeClick()) {
+                if (holdingChisel) {
+                    // 雕刻刀 → 形狀選單
+                    mc.setScreen(new ChiselToolScreen());
+                } else if (holdingWand) {
+                    // 法杖 → 控制面板
+                    mc.setScreen(new ControlPanelScreen());
+                }
+            }
         }
 
         /**

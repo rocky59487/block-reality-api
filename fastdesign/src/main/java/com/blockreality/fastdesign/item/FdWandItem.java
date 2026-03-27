@@ -131,9 +131,12 @@ public class FdWandItem extends Item {
                                  List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.literal("左鍵: 設定選取點 A").withStyle(ChatFormatting.GREEN));
         tooltip.add(Component.literal("右鍵: 設定選取點 B / 多方塊放置").withStyle(ChatFormatting.AQUA));
-        tooltip.add(Component.literal("Shift+右鍵: 開啟控制面板").withStyle(ChatFormatting.YELLOW));
+        tooltip.add(Component.literal("Alt: 開啟控制面板").withStyle(ChatFormatting.YELLOW));
         tooltip.add(Component.literal("V 鍵: 切換建造模式").withStyle(ChatFormatting.LIGHT_PURPLE));
         tooltip.add(Component.literal("Ctrl+右鍵: 設定鏡像錨點").withStyle(ChatFormatting.DARK_PURPLE));
+        tooltip.add(Component.empty());
+        tooltip.add(Component.literal("↑↓ 調高度  ←→ 調寬度  H 邊長").withStyle(ChatFormatting.GRAY));
+        tooltip.add(Component.literal("X+右鍵: 橡皮擦").withStyle(ChatFormatting.RED));
         tooltip.add(Component.empty());
         tooltip.add(Component.literal("Fast Design 建築輔助工具").withStyle(ChatFormatting.GRAY));
     }
