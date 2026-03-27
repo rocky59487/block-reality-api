@@ -43,8 +43,4 @@ public class BRNetwork {
             AnchorPathSyncPacket.class,
             AnchorPathSyncPacket::encode,
             AnchorPathSyncPacket::decode,
-            AnchorPathSyncPacket::handle
-        );
-
-    }
-}
+            Anch

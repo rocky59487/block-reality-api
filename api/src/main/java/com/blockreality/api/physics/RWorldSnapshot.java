@@ -17,8 +17,33 @@ import java.util.Set;
  */
 public class RWorldSnapshot {
 
-    /** 安全煞車：最大快照方塊數 (≈ 40×40×40)，超過直接拒絕，防範 OOM */
-    public static final int MAX_SNAPSHOT_BLOCKS = 65536;
+    /** 安全煞車：預設最大快照方塊數 (≈ 40×40×40)，超過直接拒絕，防範 OOM */
+    public static final int DEFAULT_MAX_SNAPSHOT_BLOCKS = 65536;
+
+    /**
+     * ★ Phase 1: 可配置的最大快照方塊數。
+     * 預設值向後相容（65536），可透過 BRConfig.maxSnapshotBlocks 提高到 262144+。
+     * 使用 volatile 確保配置更新後立即對所有執行緒可見。
+     */
+    private static volatile int maxSnapshotBlocks = DEFAULT_MAX_SNAPSHOT_BLOCKS;
+
+    /** 向後相容：保留靜態欄位名 MAX_SNAPSHOT_BLOCKS 供現有程式碼使用 */
+    public static final int MAX_SNAPSHOT_BLOCKS = DEFAULT_MAX_SNAPSHOT_BLOCKS;
+
+    /**
+     * ★ Phase 1: 設定運行時最大快照方塊數。
+     * ★ audit-fix M-3: 移除 Math.max 限制 — 允許設定低於 DEFAULT 的值。
+     * ForgeConfigSpec 的 defineInRange 已保證值在有效範圍內（65536~1048576），
+     * 此處不需額外 clamp。
+     */
+    public static void setMaxSnapshotBlocks(int max) {
+        maxSnapshotBlocks = max;
+    }
+
+    /** ★ Phase 1: 取得目前最大快照方塊數 */
+    public static int getMaxSnapshotBlocks() {
+        return maxSnapshotBlocks;
+    }
 
     private final int startX, startY, startZ;
     private final int sizeX, sizeY, sizeZ;
@@ -48,10 +73,11 @@ public class RWorldSnapshot {
         this.sizeZ = Math.abs(end.getZ() - start.getZ()) + 1;
 
         int totalBlocks = sizeX * sizeY * sizeZ;
-        if (totalBlocks > MAX_SNAPSHOT_BLOCKS) {
+        int effectiveMax = getMaxSnapshotBlocks();
+        if (totalBlocks > effectiveMax) {
             throw new IllegalArgumentException(
-                String.format("Snapshot exceeds MAX_SNAPSHOT_BLOCKS (%d). Attempted: %dx%dx%d = %d",
-                    MAX_SNAPSHOT_BLOCKS, sizeX, sizeY, sizeZ, totalBlocks)
+                String.format("Snapshot exceeds max_snapshot_blocks (%d). Attempted: %dx%dx%d = %d",
+                    effectiveMax, sizeX, sizeY, sizeZ, totalBlocks)
             );
         }
 
@@ -127,41 +153,4 @@ public class RWorldSnapshot {
 
     /**
      * 以 1D 索引直接存取方塊（零物件配置路徑）。
-     * 索引公式: lx + sizeX * (ly + sizeY * lz)
-     */
-    public RBlockState getBlockByIndex(int index) {
-        if (index < 0 || index >= blocks.length) return RBlockState.AIR;
-        RBlockState state = blocks[index];
-        return state != null ? state : RBlockState.AIR;
-    }
-
-    /**
-     * 將 1D 索引解碼為世界絕對座標。
-     */
-    public BlockPos indexToWorldPos(int index) {
-        int lx = index % sizeX;
-        int ly = (index / sizeX) % sizeY;
-        int lz = index / (sizeX * sizeY);
-        return new BlockPos(startX + lx, startY + ly, startZ + lz);
-    }
-
-    /**
-     * Get the set of block positions that were modified in this snapshot.
-     * v3fix §4.2: Used for tracking incremental changes during physics analysis.
-     *
-     * @return Unmodifiable set of changed block positions
-     */
-    public Set<BlockPos> getChangedPositions() {
-        return Collections.unmodifiableSet(changedPositions);
-    }
-
-    /**
-     * Check if a specific position was marked as changed.
-     *
-     * @param pos The block position to check
-     * @return true if the position is in the changed set
-     */
-    public boolean isPositionChanged(BlockPos pos) {
-        return changedPositions.contains(pos);
-    }
-}
+  

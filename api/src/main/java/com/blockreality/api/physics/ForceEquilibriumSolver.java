@@ -95,7 +95,7 @@ public class ForceEquilibriumSolver {
      * When a structure changes by only 1-2 blocks, warm-start provides near-converged
      * initial values, reducing iterations from ~40 to ~5-10.
      */
-    private static final int WARM_START_MAX_ENTRIES = 10;
+    private static final int WARM_START_MAX_ENTRIES = 64;
 
     @SuppressWarnings("serial")
     private static final Map<Long, Map<BlockPos, Double>> WARM_START_CACHE =
@@ -163,6 +163,8 @@ public class ForceEquilibriumSolver {
         final double weight;
         final boolean isAnchor;
         final List<BlockPos> dependents;
+        /** 有效截面積 (m²) — 雕刻形狀可能小於 1.0 */
+        final double effectiveArea;
         double supportForce;
         double totalForce;
         double lastTotalForce;
@@ -170,7 +172,7 @@ public class ForceEquilibriumSolver {
 
         NodeState(BlockPos pos, RMaterial material, double weight, double supportForce,
                   double totalForce, boolean isAnchor, List<BlockPos> dependents,
-                  double lastTotalForce, boolean converged) {
+                  double lastTotalForce, boolean converged, double effectiveArea) {
             this.pos = pos;
             this.material = material;
             this.weight = weight;
@@ -180,6 +182,7 @@ public class ForceEquilibriumSolver {
             this.dependents = dependents;
             this.lastTotalForce = lastTotalForce;
             this.converged = converged;
+            this.effectiveArea = effectiveArea;
         }
     }
 
@@ -218,7 +221,22 @@ public class ForceEquilibriumSolver {
         Map<BlockPos, RMaterial> materials,
         Set<BlockPos> anchors
     ) {
-        return solveWithDiagnostics(blocks, materials, anchors, DEFAULT_OMEGA).results();
+        return solveWithDiagnostics(blocks, materials, anchors, DEFAULT_OMEGA, Collections.emptyMap()).results();
+    }
+
+    /**
+     * ★ audit-fix C-4: 支援逐方塊截面積的求解入口。
+     * 雕刻形狀的截面積 < 1.0m²，需透過此 overload 傳入。
+     *
+     * @param effectiveAreas 方塊位置 → 有效截面積 (m²)。未列入的方塊使用 BLOCK_AREA (1.0)。
+     */
+    public static Map<BlockPos, ForceResult> solve(
+        Set<BlockPos> blocks,
+        Map<BlockPos, RMaterial> materials,
+        Set<BlockPos> anchors,
+        Map<BlockPos, Float> effectiveAreas
+    ) {
+        return solveWithDiagnostics(blocks, materials, anchors, DEFAULT_OMEGA, effectiveAreas).results();
     }
 
     /**
@@ -236,10 +254,23 @@ public class ForceEquilibriumSolver {
         Set<BlockPos> anchors,
         double initialOmega
     ) {
+        return solveWithDiagnostics(blocks, materials, anchors, initialOmega, Collections.emptyMap());
+    }
+
+    /**
+     * ★ audit-fix C-4: 完整版求解入口，支援逐方塊截面積。
+     */
+    public static SolverResult solveWithDiagnostics(
+        Set<BlockPos> blocks,
+        Map<BlockPos, RMaterial> materials,
+        Set<BlockPos> anchors,
+        double initialOmega,
+        Map<BlockPos, Float> effectiveAreas
+    ) {
         long startTime = System.nanoTime();
 
-        // 初始化節點狀態
-        Map<BlockPos, NodeState> nodeStates = initializeNodeStates(blocks, materials, anchors);
+        // 初始化節點狀態（★ audit-fix C-4: 傳入 effectiveAreas）
+        Map<BlockPos, NodeState> nodeStates = initializeNodeStates(blocks, materials, anchors, effectiveAreas);
 
         // ★ review-fix #19: 排序一次，供所有迭代重複使用（節省 O(N log N) × iter 開銷）
         List<BlockPos> sortedByY = new ArrayList<>(blocks);
@@ -353,7 +384,8 @@ public class ForceEquilibriumSolver {
     private static Map<BlockPos, NodeState> initializeNodeStates(
         Set<BlockPos> blocks,
         Map<BlockPos, RMaterial> materials,
-        Set<BlockPos> anchors
+        Set<BlockPos> anchors,
+        Map<BlockPos, Float> effectiveAreas
     ) {
         Map<BlockPos, NodeState> states = new HashMap<>();
 
@@ -386,6 +418,11 @@ public class ForceEquilibriumSolver {
                 }
             }
 
+            // ★ audit-fix C-4: 從 effectiveAreas 讀取實際截面積，未指定則預設 BLOCK_AREA
+            double area = effectiveAreas.containsKey(pos)
+                ? effectiveAreas.get(pos).doubleValue()
+                : BLOCK_AREA;
+
             NodeState ns = new NodeState(
                 pos,
                 mat,
@@ -395,7 +432,8 @@ public class ForceEquilibriumSolver {
                 isAnchor,
                 dependents,
                 initialForce,   // lastTotalForce
-                false           // converged 初始 = false
+                false,          // converged 初始 = false
+                area            // ★ audit-fix C-4: 使用實際截面積
             );
             states.put(pos, ns);
         }
@@ -447,16 +485,26 @@ public class ForceEquilibriumSolver {
         // 兩者 XOR 後再疊乘，確保位置和材料都影響 fingerprint
         return blocks.stream()
             .sorted(Comparator.comparingLong(BlockPos::asLong))
-            .mapToLong(pos -> {
-                long posHash = pos.asLong();
-                RMaterial mat = materials.get(pos);
-                long matBits = (mat != null)
-                    ? Double.doubleToRawLongBits(mat.getCombinedStrength())
-                    : 0L;
-                return posHash ^ (matBits * FNV1A_PRIME);
-            })
+            .mapToLong(pos -> blockFingerprint(pos, materials.get(pos)))
             .reduce(FNV1A_OFFSET_BASIS, (hash, val) -> (hash ^ val) * FNV1A_PRIME);
     }
+
+    /**
+     * 單一方塊的 fingerprint 貢獻值。
+     * 供 delta fingerprint 使用：增刪方塊時 XOR 進/出即可。
+     */
+    static long blockFingerprint(BlockPos pos, RMaterial mat) {
+        long posHash = pos.asLong();
+        long matBits = (mat != null)
+            ? Double.doubleToRawLongBits(mat.getCombinedStrength())
+            : 0L;
+        return posHash ^ (matBits * FNV1A_PRIME);
+    }
+
+    // ★ audit-fix C-2: deltaFingerprint 已移除。
+    // XOR delta 與 FNV-1a chain 不等價（XOR 是交換結合的，FNV-1a chain 是有序的），
+    // 導致 delta 更新產生的 fingerprint 與全量重算不同，造成 warm-start cache 假命中。
+    // 結構通常 < 1000 blocks，全量 computeStructureFingerprint 的 O(N log N) 完全可接受。
 
     /**
      * 執行一次 SOR (Successive Over-Relaxation) 迭代步驟。
@@ -508,80 +556,4 @@ public class ForceEquilibriumSolver {
 
             // ★ review-fix #10: 就地更新 mutable NodeState，不再分配新物件
             ns.supportForce = distributedForce;
-            ns.totalForce = newForce;
-            ns.lastTotalForce = oldForce;
-        }
-
-        return maxForceDelta;
-    }
-
-    /**
-     * 將方塊的載重分配到下方/側方支撐點。
-     * 優先向下（重力方向），若下方無支撐則向側方。
-     *
-     * @return 實際分配到的支撐力
-     */
-    private static double distributeLoad(
-        BlockPos pos,
-        double load,
-        Map<BlockPos, NodeState> nodeStates
-    ) {
-        // 優先下方
-        BlockPos below = pos.below();
-        NodeState belowState = nodeStates.get(below);
-        if (belowState != null) {
-            // 檢查下方支撐點的容量
-            if (belowState.isAnchor || canSupport(belowState, load)) {
-                return load;  // 下方支撐充足
-            }
-        }
-
-        // 側方支撐（水平 4 方向）
-        // ★ new-fix N3: 改用 HORIZONTAL_DIRS 靜態常數，消除熱路徑匿名陣列分配
-        double sideSupport = 0.0;
-        int sideSupportCount = 0;
-        for (int[] dir : HORIZONTAL_DIRS) {
-            BlockPos side = new BlockPos(pos.getX() + dir[0], pos.getY() + dir[1], pos.getZ() + dir[2]);
-            NodeState sideState = nodeStates.get(side);
-            if (sideState != null && (sideState.isAnchor || canSupport(sideState, load / 4.0))) {
-                sideSupport += load / 4.0;
-                sideSupportCount++;
-            }
-        }
-
-        return sideSupport;
-    }
-
-    /** 方塊截面積 1m × 1m = 1 m²（Minecraft 方塊標準尺寸）
-     *  ★ new-fix N5: 引用 PhysicsConstants.BLOCK_AREA，消除重複定義 */
-    private static final double BLOCK_AREA = PhysicsConstants.BLOCK_AREA;
-
-    /**
-     * 判定方塊能否支撐指定的載重（力，單位 N）。
-     * ★ v4-fix: 正確的力/容量比較
-     *   容量 = Rcomp(Pa) × A(m²) = N
-     *   load = 力 (N)
-     */
-    private static boolean canSupport(NodeState node, double load) {
-        if (node.isAnchor) return true;
-        // ★ H-5 fix: 材料 null 或 Rcomp ≤ 0 時無法支撐
-        if (node.material == null) return false;
-        double rcomp = node.material.getRcomp();
-        if (rcomp <= 0) return false;
-        double capacity = rcomp * 1e6 * BLOCK_AREA;  // Pa × m² = N
-        return capacity >= load;
-    }
-
-    /**
-     * 計算方塊的強度利用率。
-     * ★ v4-fix: 正確的應力計算
-     *   應力 σ = F / A (Pa)
-     *   利用率 = σ / Rcomp
-     */
-    private static double calculateUtilization(NodeState ns, RMaterial mat) {
-        double compCapacity = mat.getRcomp() * 1e6;  // Pa
-        if (compCapacity <= 0) return 1.0;
-        double actualStress = ns.totalForce / BLOCK_AREA;  // F/A = Pa
-        return actualStress / compCapacity;
-    }
-}
+            ns.totalFor

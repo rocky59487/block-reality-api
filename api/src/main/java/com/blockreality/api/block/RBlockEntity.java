@@ -1,5 +1,8 @@
 package com.blockreality.api.block;
 
+import com.blockreality.api.chisel.ChiselState;
+import com.blockreality.api.chisel.SubBlockShape;
+import com.blockreality.api.chisel.VoxelGrid;
 import com.blockreality.api.material.BlockType;
 import com.blockreality.api.material.DefaultMaterial;
 import com.blockreality.api.material.DynamicMaterial;
@@ -51,6 +54,9 @@ public class RBlockEntity extends BlockEntity {
     private static final String TAG_DYN_RTENS = "br_dyn_rtens";
     private static final String TAG_DYN_RSHEAR = "br_dyn_rshear";
     private static final String TAG_DYN_DENSITY = "br_dyn_density";
+    // 雕刻狀態 NBT 標籤
+    private static final String TAG_CHISEL_SHAPE = "br_chisel_shape";
+    private static final String TAG_CHISEL_VOXELS = "br_chisel_voxels";
 
     // ─── 同步節流 ───
     private static final long SYNC_INTERVAL_MS = 50;
@@ -77,6 +83,17 @@ public class RBlockEntity extends BlockEntity {
 
     /** 目前承受的總載重 (自重 + 所有依賴者的重量)，單位 kg */
     private float currentLoad = 0.0f;
+
+    /** 雕刻狀態 — 預設為完整方塊，向後相容 */
+    private ChiselState chiselState = ChiselState.FULL;
+
+    /**
+     * ★ audit-fix M-4: 自訂形狀的 VoxelShape 快取。
+     * 模板形狀已在 RBlock.SHAPE_CACHE 中快取，此處僅快取 CUSTOM 形狀。
+     * setChiselState() 時清除。
+     */
+    @Nullable
+    private transient net.minecraft.world.phys.shapes.VoxelShape cachedCustomShape = null;
 
     // ─── 區塊卸載標記 ───
     /** ★ H-1: 區塊正在卸載時為 true，setRemoved() 中跳過崩塌邏輯 */
@@ -128,10 +145,33 @@ public class RBlockEntity extends BlockEntity {
     public void setPreFusionMaterial(@Nullable RMaterial mat) { this.preFusionMaterial = mat; setChanged(); }
 
     /**
-     * 取得自重 (kg) — density × 1m³ = density
+     * 取得自重 (kg) — density × fillRatio。
+     * 半磚 fillRatio=0.5 → 重量減半。
      */
     public float getSelfWeight() {
-        return (float) material.getDensity();
+        return (float) (material.getDensity() * chiselState.fillRatio());
+    }
+
+    public ChiselState getChiselState() { return chiselState; }
+
+    public void setChiselState(ChiselState state) {
+        this.chiselState = state != null ? state : ChiselState.FULL;
+        this.cachedCustomShape = null; // ★ audit-fix M-4: 清除形狀快取
+        setChanged();
+        syncToClient();
+    }
+
+    /**
+     * ★ audit-fix M-4: 取得或建立自訂形狀的 VoxelShape 快取。
+     * 僅用於 CUSTOM 形狀（非模板），避免每次 getShape() 重建。
+     */
+    @Nullable
+    public net.minecraft.world.phys.shapes.VoxelShape getCachedCustomShape() {
+        return cachedCustomShape;
+    }
+
+    public void setCachedCustomShape(net.minecraft.world.phys.shapes.VoxelShape shape) {
+        this.cachedCustomShape = shape;
     }
 
     // ─── Setters (with sync) ───
@@ -292,6 +332,13 @@ public class RBlockEntity extends BlockEntity {
         if (preFusionMaterial != null) {
             tag.putString("br_prefusion_id", preFusionMaterial.getMaterialId());
         }
+        // 雕刻狀態：模板只存 shape name，CUSTOM 額外存體素資料
+        if (!chiselState.isFull()) {
+            tag.putString(TAG_CHISEL_SHAPE, chiselState.shape().getSerializedName());
+            if (chiselState.isCustom()) {
+                chiselState.voxelGrid().saveToTag(tag);
+            }
+        }
     }
 
     @Override
@@ -299,72 +346,4 @@ public class RBlockEntity extends BlockEntity {
         super.load(tag);
         if (tag.contains(TAG_MATERIAL)) {
             String matId = tag.getString(TAG_MATERIAL);
-            if (tag.getBoolean(TAG_IS_DYNAMIC)) {
-                // DynamicMaterial：從 NBT 重建完整的動態材料
-                this.material = DynamicMaterial.ofCustom(
-                    matId,
-                    tag.getDouble(TAG_DYN_RCOMP),
-                    tag.getDouble(TAG_DYN_RTENS),
-                    tag.getDouble(TAG_DYN_RSHEAR),
-                    tag.getDouble(TAG_DYN_DENSITY)
-                );
-            } else {
-                this.material = DefaultMaterial.fromId(matId);
-            }
-        }
-        if (tag.contains(TAG_BLOCK_TYPE)) {
-            this.blockType = BlockType.fromString(tag.getString(TAG_BLOCK_TYPE));
-        }
-        if (tag.contains(TAG_STRUCTURE)) {
-            this.structureId = tag.getInt(TAG_STRUCTURE);
-        }
-        if (tag.contains(TAG_ANCHORED)) {
-            this.isAnchored = tag.getBoolean(TAG_ANCHORED);
-        }
-        if (tag.contains(TAG_STRESS)) {
-            this.stressLevel = tag.getFloat(TAG_STRESS);
-        }
-        if (tag.contains(TAG_CURRENT_LOAD)) {
-            this.currentLoad = tag.getFloat(TAG_CURRENT_LOAD);
-        }
-        if (tag.getBoolean(TAG_HAS_SUPPORT)) {
-            this.supportParent = new BlockPos(
-                tag.getInt(TAG_SUPPORT_X),
-                tag.getInt(TAG_SUPPORT_Y),
-                tag.getInt(TAG_SUPPORT_Z)
-            );
-        } else {
-            this.supportParent = null;
-        }
-        // ★ B-2: 原始材料復原
-        if (tag.getBoolean("br_has_prefusion") && tag.contains("br_prefusion_id")) {
-            this.preFusionMaterial = DefaultMaterial.fromId(tag.getString("br_prefusion_id"));
-        } else {
-            this.preFusionMaterial = null;
-        }
-    }
-
-    // ─── Client 同步包 ───
-
-    @Override
-    @NotNull
-    public CompoundTag getUpdateTag() {
-        CompoundTag tag = super.getUpdateTag();
-        saveAdditional(tag);
-        return tag;
-    }
-
-    @Override
-    @Nullable
-    public Packet<ClientGamePacketListener> getUpdatePacket() {
-        return ClientboundBlockEntityDataPacket.create(this);
-    }
-
-    @Override
-    public void onDataPacket(Connection net, ClientboundBlockEntityDataPacket pkt) {
-        CompoundTag tag = pkt.getTag();
-        if (tag != null) {
-            load(tag);
-        }
-    }
-}
+            if (tag.getBoolean(TAG_IS_DYN

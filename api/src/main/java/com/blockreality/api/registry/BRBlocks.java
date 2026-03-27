@@ -2,6 +2,7 @@ package com.blockreality.api.registry;
 
 import com.blockreality.api.BlockRealityMod;
 import com.blockreality.api.block.RBlock;
+import com.blockreality.api.item.ChiselItem;
 import net.minecraft.world.item.BlockItem;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.level.block.Block;
@@ -76,6 +77,4 @@ public class BRBlocks {
     public static final RegistryObject<Item> R_STEEL_ITEM = ITEMS.register("r_steel",
         () -> new BlockItem(R_STEEL.get(), new Item.Properties()));
 
-    public static final RegistryObject<Item> R_TIMBER_ITEM = ITEMS.register("r_timber",
-        () -> new BlockItem(R_TIMBER.get(), new Item.Properties()));
-}
+    public static final RegistryObj

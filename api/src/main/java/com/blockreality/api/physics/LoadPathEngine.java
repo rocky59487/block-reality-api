@@ -1,6 +1,7 @@
 package com.blockreality.api.physics;
 
 import com.blockreality.api.block.RBlockEntity;
+import com.blockreality.api.chisel.ChiselState;
 import com.blockreality.api.config.BRConfig;
 import com.blockreality.api.event.LoadPathChangedEvent;
 import com.blockreality.api.event.StressUpdateEvent;
@@ -341,7 +342,8 @@ public class LoadPathEngine {
 
         // ★ v4-fix: 載重利用率折扣 — 正確的力/應力單位轉換
         // capacity(N) = Rcomp(Pa) × A(m²), loadForce(N) = mass(kg) × g(m/s²)
-        double capacity = mat.getRcomp() * 1e6 * BLOCK_CROSS_SECTION_AREA; // Pa × m² = N
+        double effectiveArea = rbe.getChiselState().crossSectionArea();
+        double capacity = mat.getRcomp() * 1e6 * effectiveArea; // Pa × m² = N
         if (capacity > 0) {
             double loadForce = rbe.getCurrentLoad() * GRAVITY; // kg → N
             double utilization = loadForce / capacity;
@@ -401,7 +403,8 @@ public class LoadPathEngine {
             // ★ v4-fix: 壓碎檢查 — 正確的力/容量單位
             // loadForce(N) = mass(kg) × g(m/s²), capacity(N) = Rcomp(Pa) × A(m²)
             RMaterial mat = rbe.getMaterial();
-            double capacity = mat.getRcomp() * 1e6 * BLOCK_CROSS_SECTION_AREA; // Pa × m² = N
+            double effectiveArea = rbe.getChiselState().crossSectionArea();
+            double capacity = mat.getRcomp() * 1e6 * effectiveArea; // Pa × m² = N
             double loadForce = newLoad * GRAVITY; // kg → N
             float oldStress = 0f;
             float newStress = 0f;
@@ -523,28 +526,4 @@ public class LoadPathEngine {
         path.add(pos);
         visited.add(pos);
 
-        BlockPos current = pos;
-        int maxDepth = BRConfig.INSTANCE.anchorBfsMaxDepth.get();
-        int steps = 0;
-
-        while (steps < maxDepth) {
-            BlockEntity be = level.getBlockEntity(current);
-            if (!(be instanceof RBlockEntity rbe)) break;
-
-            if (rbe.isAnchored()) break; // 到達錨定點
-
-            BlockPos parent = rbe.getSupportParent();
-            if (parent == null) break; // 斷鏈
-            if (!visited.add(parent)) {
-                LOGGER.error("[LoadPath] CYCLE DETECTED in support tree at {}!", parent);
-                break;
-            }
-
-            path.add(parent);
-            current = parent;
-            steps++;
-        }
-
-        return path;
-    }
-}
+        BlockPos current = 

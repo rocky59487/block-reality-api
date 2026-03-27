@@ -36,9 +36,6 @@ public class FdWandItem extends Item {
         super(new Item.Properties().stacksTo(1));
     }
 
-    /**
-     * 右鍵點擊方塊 — 設定 pos2 或多方塊放置
-     */
     @Override
     public InteractionResult useOn(UseOnContext context) {
         if (!FastDesignConfig.isWandEnabled()) {
@@ -51,13 +48,14 @@ public class FdWandItem extends Item {
         Level level = context.getLevel();
         BlockPos pos = context.getClickedPos();
 
-        // Wand is exclusively for selection (Pos1/Pos2).
         if (level.isClientSide) {
+            net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
+                net.minecraftforge.api.distmarker.Dist.CLIENT,
+                () -> () -> com.blockreality.fastdesign.client.WandClientHandler.handleMultiBlock(player, pos)
+            );
             return InteractionResult.SUCCESS;
         }
 
-        // ─── 伺服器端: NORMAL 模式 — 傳統 pos2 設定 ───
-        // 多方塊模式的伺服器端放置由 PLACE_MULTI packet handler 處理
         PlayerSelectionManager.setPos2(player.getUUID(), pos);
 
         if (player instanceof ServerPlayer sp) {
@@ -86,9 +84,6 @@ public class FdWandItem extends Item {
         return InteractionResult.CONSUME;
     }
 
-    /**
-     * 右鍵空氣 — Shift 時開啟 Control Panel
-     */
     @Override
     public InteractionResultHolder<ItemStack> use(Level level, Player player, InteractionHand hand) {
         ItemStack stack = player.getItemInHand(hand);
@@ -99,11 +94,10 @@ public class FdWandItem extends Item {
 
         if (player.isShiftKeyDown()) {
             if (level.isClientSide) {
-                // v2.0: Shift+右鍵 開啟 Pie Menu 快捷輪盤
                 net.minecraftforge.fml.DistExecutor.unsafeRunWhenOn(
                     net.minecraftforge.api.distmarker.Dist.CLIENT,
                     () -> () -> net.minecraft.client.Minecraft.getInstance().setScreen(
-                        new com.blockreality.fastdesign.client.PieMenuScreen()));
+                        new com.blockreality.fastdesign.client.ControlPanelScreen()));
             }
             return InteractionResultHolder.consume(stack);
         }
@@ -111,28 +105,23 @@ public class FdWandItem extends Item {
         return InteractionResultHolder.pass(stack);
     }
 
-    /**
-     * 發光效果
-     */
     @Override
     public boolean isFoil(ItemStack stack) {
         return true;
     }
 
-    /**
-     * 工具提示
-     */
     @Override
     public void appendHoverText(ItemStack stack, @Nullable Level level,
                                  List<Component> tooltip, TooltipFlag flag) {
         tooltip.add(Component.literal("左鍵: 設定選取點 A").withStyle(ChatFormatting.GREEN));
-        tooltip.add(Component.literal("右鍵: 設定選取點 B").withStyle(ChatFormatting.AQUA));
-        tooltip.add(Component.literal("Shift+右鍵: 開啟快捷輪盤").withStyle(ChatFormatting.YELLOW));
-        tooltip.add(Component.literal("中鍵: 材質拾色器").withStyle(ChatFormatting.GOLD));
+        tooltip.add(Component.literal("右鍵: 設定選取點 B / 多方塊放置").withStyle(ChatFormatting.AQUA));
+        tooltip.add(Component.literal("Alt: 快捷輪盤 / 形狀選單").withStyle(ChatFormatting.YELLOW));
         tooltip.add(Component.literal("V 鍵: 切換建造模式").withStyle(ChatFormatting.LIGHT_PURPLE));
-        tooltip.add(Component.literal("Alt: 快捷輪盤").withStyle(ChatFormatting.DARK_AQUA));
         tooltip.add(Component.literal("Ctrl+右鍵: 設定鏡像錨點").withStyle(ChatFormatting.DARK_PURPLE));
         tooltip.add(Component.empty());
-        tooltip.add(Component.literal("Fast Design v2 建築輔助工具").withStyle(ChatFormatting.GRAY));
+        tooltip.add(Component.literal("↑↓ 調高度  ←→ 調寬度  H 邊長/拖邊界").withStyle(ChatFormatting.GRAY));
+        tooltip.add(Component.literal("X: 取消選取 / X+右鍵: 橡皮擦").withStyle(ChatFormatting.RED));
+        tooltip.add(Component.empty());
+        tooltip.add(Component.literal("Fast Design 建築輔助工具").withStyle(ChatFormatting.GRAY));
     }
 }

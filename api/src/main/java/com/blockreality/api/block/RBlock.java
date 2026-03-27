@@ -1,8 +1,13 @@
 package com.blockreality.api.block;
 
+import com.blockreality.api.chisel.ChiselState;
+import com.blockreality.api.chisel.SubBlockShape;
+import com.blockreality.api.chisel.VoxelGrid;
 import net.minecraft.core.BlockPos;
+import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.BaseEntityBlock;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.RenderShape;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -11,8 +16,13 @@ import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockBehaviour;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.MapColor;
+import net.minecraft.world.phys.shapes.CollisionContext;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Block Reality 結構方塊。
@@ -49,23 +59,4 @@ public class RBlock extends BaseEntityBlock {
 
     /**
      * 目前不需要 tick — 未來養護計時 (RC curing) 可在此掛載 ticker。
-     */
-    @Override
-    @Nullable
-    public <T extends BlockEntity> BlockEntityTicker<T> getTicker(
-            @NotNull Level level,
-            @NotNull BlockState state,
-            @NotNull BlockEntityType<T> type) {
-        return null;
-    }
-
-    /**
-     * 使用標準方塊模型渲染。
-     * BaseEntityBlock 預設是 INVISIBLE，必須覆寫。
-     */
-    @Override
-    @NotNull
-    public RenderShape getRenderShape(@NotNull BlockState state) {
-        return RenderShape.MODEL;
-    }
-}
+     *

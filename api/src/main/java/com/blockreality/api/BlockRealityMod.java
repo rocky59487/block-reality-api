@@ -61,6 +61,7 @@ public class BlockRealityMod {
                 output.accept(BRBlocks.R_REBAR_ITEM.get());
                 output.accept(BRBlocks.R_STEEL_ITEM.get());
                 output.accept(BRBlocks.R_TIMBER_ITEM.get());
+                output.accept(BRBlocks.CHISEL.get());
             })
             .build()
     );
@@ -151,10 +152,4 @@ public class BlockRealityMod {
         SidecarBridge.getInstance().stop();
 
         // 清理快取（避免跨世界洩漏）
-        AnchorContinuityChecker.getInstance().clearCache();
-        UnionFindEngine.clearCache();
-        CollapseManager.clearQueue();
-
-        LOGGER.info("[BlockReality] All engines & Sidecar stopped, caches cleared");
-    }
-}
+        AnchorContinui

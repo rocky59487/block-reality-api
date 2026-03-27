@@ -16,6 +16,5 @@ public final class PhysicsConstants {
     /** 方塊截面積 (m²) — Minecraft 方塊 1m × 1m */
     public static final double BLOCK_AREA = 1.0;
 
-    /** 物理時間步長 (seconds per game tick, 20 TPS → 0.05s) */
-    public static final double TICK_DT = 0.05;
-}
+    /** 完整方塊截面慣性矩 (m⁴) — 1m × 1m 正方形: I = b⁴/12 */
+    public static fi

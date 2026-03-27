@@ -3,7 +3,9 @@ package com.blockreality.api.event;
 import com.blockreality.api.BlockRealityMod;
 import com.blockreality.api.collapse.CollapseManager;
 import com.blockreality.api.construction.ConstructionZoneManager;
+import com.blockreality.api.physics.PhysicsScheduler;
 import com.blockreality.api.physics.ResultApplicator;
+import com.blockreality.api.physics.StructureIslandRegistry;
 import com.blockreality.api.physics.UnionFindEngine;
 import com.blockreality.api.spi.ModuleRegistry;
 import net.minecraft.core.BlockPos;
@@ -79,39 +81,26 @@ public class ServerTickHandler {
             }
         }
 
+        // ★ audit-fix C-1: 消費 PhysicsScheduler 的 dirty queue，防止記憶體洩漏。
+        // getScheduledWork 原本未被呼叫，導致 dirtyIslandIds 只增不減。
+        // 目前僅 drain（標記已處理），未來可在此處觸發延遲物理重算。
+        if (PhysicsScheduler.hasPendingWork()) {
+            MinecraftServer srv3 = ServerLifecycleHooks.getCurrentServer();
+            if (srv3 != null) {
+                java.util.List<net.minecraft.server.level.ServerPlayer> players =
+                    srv3.getPlayerList().getPlayers();
+                long epoch = UnionFindEngine.getStructureEpoch();
+                java.util.List<PhysicsScheduler.ScheduledWork> work =
+                    PhysicsScheduler.getScheduledWork(players, epoch);
+                for (PhysicsScheduler.ScheduledWork sw : work) {
+                    PhysicsScheduler.markProcessed(sw.islandId());
+                }
+            }
+        }
+
         // ★ AD-7: 定期驅逐過期 UnionFind 快取條目，防止記憶體洩漏
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server != null && server.getTickCount() % CACHE_EVICTION_INTERVAL == 0) {
             UnionFindEngine.evictStaleEntries();
         }
     }
-
-    /**
-     * 每 level tick 結束時驅動養護檢查。
-     * 養護系統在所有維度運作（現實混凝土不因維度而改變固化速度）。
-     */
-    @SubscribeEvent
-    public static void onLevelTick(TickEvent.LevelTickEvent event) {
-        if (event.phase != TickEvent.Phase.END) return;
-        if (!(event.level instanceof ServerLevel level)) return;
-
-        if (level.getServer().getTickCount() % CURING_CHECK_INTERVAL != 0) return;
-
-        ConstructionZoneManager manager = ConstructionZoneManager.get(level);
-        if (manager.getZoneCount() > 0) {
-            manager.tickCuring(level, level.getServer().getTickCount());
-        }
-    }
-
-    /**
-     * 世界卸載時清空坍方佇列。
-     */
-    @SubscribeEvent
-    public static void onWorldUnload(LevelEvent.Unload event) {
-        CollapseManager.clearQueue();
-        // ★ R3-10 fix: 世界卸載時清理 ResultApplicator 失敗追蹤，
-        // 防止殘留的 BlockPos 在其他世界的 retryFailed() 中被錯誤查詢。
-        ResultApplicator.clearFailedPositions();
-        LOGGER.debug("[BR-Tick] Collapse queue & failed positions cleared on world unload");
-    }
-}

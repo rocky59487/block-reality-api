@@ -69,6 +69,25 @@ public class BRConfig {
     /** ★ v3fix: 啟用 ForceEquilibriumSolver 作為備選分析方法（預設關閉） */
     public final ForgeConfigSpec.BooleanValue useForceEquilibrium;
 
+    // ─── Phase 2: 並行物理引擎參數 ───
+
+    /** ★ Phase 2: 物理執行緒數（0 = 自動，使用 availableProcessors - 2） */
+    public final ForgeConfigSpec.IntValue physicsThreadCount;
+
+    /** ★ Phase 1: 快照最大方塊數上限（突破 40³ 限制） */
+    public final ForgeConfigSpec.IntValue maxSnapshotBlocks;
+
+    // ─── Phase 4: LOD 物理參數 ───
+
+    /** ★ Phase 4: 完整精度物理的最大距離（格） */
+    public final ForgeConfigSpec.IntValue lodFullPrecisionDistance;
+
+    /** ★ Phase 4: 標準精度物理的最大距離（格） */
+    public final ForgeConfigSpec.IntValue lodStandardDistance;
+
+    /** ★ Phase 4: 粗略精度物理的最大距離（格） */
+    public final ForgeConfigSpec.IntValue lodCoarseDistance;
+
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
         INSTANCE = new BRConfig(builder);
@@ -124,25 +143,4 @@ public class BRConfig {
             .defineInRange("bfs_max_blocks", 2048, 64, 262144);
 
         structureBfsMaxMs = builder
-            .comment("Structure BFS maximum execution time in ms. W-8 fix: raised from 15 to 50ms for SupportPathAnalyzer weighted BFS.")
-            .defineInRange("bfs_max_ms", 50, 5, 500);
-
-        snapshotMaxRadius = builder
-            .comment("Snapshot maximum radius (blocks)")
-            .defineInRange("snapshot_max_radius", 20, 4, 40);
-
-        scanMarginDefault = builder
-            .comment("Default scan margin for physics analysis (blocks)")
-            .defineInRange("scan_margin_default", 4, 0, 16);
-
-        cycleDetectMaxDepth = builder
-            .comment("T-3: Max parent chain depth for cycle detection in support tree (default 8)")
-            .defineInRange("cycle_detect_max_depth", 8, 2, 64);
-
-        useForceEquilibrium = builder
-            .comment("v3fix: Enable ForceEquilibriumSolver as alternative physics analysis (experimental, default false)")
-            .define("use_force_equilibrium", false);
-
-        builder.pop();
-    }
-}
+            .comment
